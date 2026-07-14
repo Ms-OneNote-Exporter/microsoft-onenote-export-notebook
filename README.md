@@ -1,6 +1,16 @@
-# microsoft-onenote-export-notebook-playwright
+# microsoft-onenote-export-notebook
 
-Export a Microsoft OneNote notebook to Obsidian-compatible Markdown via Playwright — extracted from [MSOneNote Exporter](https://github.com/msout/Microsoft-OneNote-Exporter).
+## Why does this project exists ?
+Well MS is not playing it fair when it comes to export your complete notebook.
+You can export page by page from OneNote interface...
+MS DO not provide any convenient way, that I am aware of, to export the whole thing.
+And I am sure none exists to export it as markdown.
+
+NO GraphAPI, no limitation. 
+GraphAPI has following limitation :
+ - since years... it is limiting you to 50page or so
+ - you need your entra admin to provide you with rights to use MSEntra GraphAPI
+
 
 This is a standalone CLI tool for exporting OneNote notebooks using Playwright with authentication state loaded from a JSON file (produced by `microsoft-webauth-playwright`).
 
