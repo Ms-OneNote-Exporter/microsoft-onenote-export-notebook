@@ -1,6 +1,8 @@
 # microsoft-onenote-export-notebook
 
+
 ## Why does this project exists ?
+
 Well MS is not playing it fair when it comes to export your complete notebook.
 You can export page by page from OneNote interface...
 MS DO not provide any convenient way, that I am aware of, to export the whole thing.
@@ -9,10 +11,14 @@ And I am sure none exists to export it as markdown.
 NO GraphAPI, no limitation. 
 GraphAPI has following limitation :
  - since years... it is limiting you to 50page or so
+ => look by youself: https://learn.microsoft.com/en-us/answers/questions/2276682/onenote-api-fails-with-large-sharepoint-document-l 
  - you need your entra admin to provide you with rights to use MSEntra GraphAPI
 
 
-This is a standalone CLI tool for exporting OneNote notebooks using Playwright with authentication state loaded from a JSON file (produced by `microsoft-webauth-playwright`).
+This is a standalone CLI tool for exporting Microsoft OneNote notebooks using Playwright with authentication state loaded from a JSON file (produced by [microsoft-webauth](https://github.com/Ms-OneNote-Exporter/microsoft-webauth)).
+
+## Issues
+Please raise an issue if you find any
 
 ## Installation
 
@@ -87,11 +93,15 @@ Each Markdown file uses Obsidian wikilink format:
 
 ## Authentication
 
-Authentication state must be obtained using the `microsoft-webauth-playwright` module:
+Authentication state must be obtained using the `microsoft-webauth` module:
 
 ```bash
+# After having download and installed [microsoft-webauth](https://github.com/Ms-OneNote-Exporter/microsoft-webauth)
 # First, authenticate (saves auth.json)
-webauth login --email your@email.com --password yourpassword
+microsoft-webauth login --email your@email.com --password yourpassword
+
+# Second, list you notebook with [microsoft-onenote-list-notebooks](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-list-notebooks)
+microsoft-onenote-list-notebook list --auth-file ../microsoft-webauth/auth.json 
 
 # Then export
 node src/index.js export \
