@@ -5,3 +5,10 @@ auth.json
 *.log
 .DS_Store
 diag-dumps/
+.qwen
+QWEN.md
+
+# Third-party reference documents. The Microsoft Q&A thread that documents the
+# Graph API page limit is cited by URL in README.md rather than vendored here:
+# it is not our content to relicense, and the link stays current.
+*.pdf
