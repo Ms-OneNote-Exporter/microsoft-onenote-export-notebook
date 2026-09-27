@@ -6,7 +6,9 @@ const { runExport } = require('./exporter');
 program
     .name('onenote-export-nb')
     .description('Export a Microsoft OneNote notebook to Obsidian Markdown via Playwright — extracted from MSOneNote Exporter')
-    .version('1.0.0');
+    // Single source of truth: a hardcoded version drifts from package.json and
+    // makes `--version` report a release that does not exist.
+    .version(require('../package.json').version);
 
 program
     .command('export')
