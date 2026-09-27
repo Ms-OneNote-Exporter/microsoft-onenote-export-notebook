@@ -28,11 +28,25 @@ This is a standalone CLI tool for exporting Microsoft OneNote notebooks using Pl
 ## Issues
 Please raise an issue if you find any
 
+## Available on npmjs
+
+<https://www.npmjs.com/package/@msout/microsoft-onenote-export-notebook>
+
 ## Installation
 
 ```bash
+npm install -g @msout/microsoft-onenote-export-notebook
+```
+
+Or locally, for development:
+
+```bash
+git clone https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook.git
+cd microsoft-onenote-export-notebook
 npm install
 ```
+
+After a global install the command is available as `onenote-export-nb`.
 
 ## Usage
 
