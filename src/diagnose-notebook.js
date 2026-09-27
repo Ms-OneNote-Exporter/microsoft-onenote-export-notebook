@@ -67,7 +67,7 @@ async function diagnoseNotebook() {
         // session whose `page` is the editor tab the click opened. Keep that page:
         // the listing page has no section list, so every frame dump below would
         // otherwise be taken from the wrong document.
-        session = await openNotebook(page, context, browser, nb.id);
+        session = await openNotebook(page, context, browser, nb.id, nb.name);
     }
 
     const { browser, page } = session;

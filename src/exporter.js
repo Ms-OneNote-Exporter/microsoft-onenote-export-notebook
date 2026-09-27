@@ -100,7 +100,15 @@ function newStats() {
 async function processSections(contentFrame, outputDir, td, options, pageIdMap, processedItems = new Set(), parentId = null, stats = newStats()) {
     const sections = await getSections(contentFrame, parentId);
     if (sections.length === 0 && parentId) {
-        logger.debug('(No items found in this group)');
+        // Inside a group, an empty result usually means the group container could
+        // not be located, not that the group is empty. At debug level this made a
+        // whole subtree disappear from the export without a word.
+        logger.warn(
+            `No items found inside group ${parentId}. If this group is not really empty, ` +
+            'its sections were skipped - re-run with --dodump and check logs/dumps.'
+        );
+    } else if (sections.length === 0) {
+        logger.warn('No sections or groups found at the top level. The notebook may be empty, or the OneNote DOM may have changed.');
     } else {
         logger.info(`Found ${sections.length} items at current level.`);
     }
@@ -136,7 +144,19 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 }
                 await processSections(contentFrame, groupDir, td, options, pageIdMap, processedItems, item.id, stats);
                 logger.info(`Returning from group: ${item.name}`);
-                await navigateBack(contentFrame);
+
+                // If the back button cannot be found we are still inside the
+                // group, and the next iteration would scrape the wrong tree -
+                // silently producing a plausible but wrong export. Bail out.
+                const wentBack = await navigateBack(contentFrame);
+                if (!wentBack) {
+                    stats.failedGroups++;
+                    throw new Error(
+                        `Could not find the "Back" control after leaving group "${item.name}". ` +
+                        'Aborting this group rather than continuing against the wrong section tree.'
+                    );
+                }
+
                 logger.info('Will wait 3 seconds to let the frame load properly');
                 await contentFrame.waitForTimeout(3000);
             } catch (e) {
@@ -548,7 +568,9 @@ async function runExport(options = {}) {
                 session.page,    // listing page
                 session.context, // browser context (to capture the popup)
                 session.browser, // browser
-                selectedNotebook.id
+                selectedNotebook.id,
+                selectedNotebook.name // verified before clicking, so a re-sorted
+                                      // list cannot open the wrong notebook
             );
 
             const editorPage = editorSession.page;
