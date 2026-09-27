@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Only the newest run per ref matters; cancel superseded ones.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # `npm ci`, not `npm install`: it installs exactly the lockfile and fails
+      # if package.json and package-lock.json disagree.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      # Guards against a broken bin entry: the published package runs this file.
+      - name: Smoke test the CLI
+        run: |
+          node src/index.js --version
+          node src/index.js --help
+          # Usage errors must be non-zero and must not launch a browser.
+          if node src/index.js export --auth-file /nonexistent.json --non-interactive; then
+            echo "::error::--non-interactive without a notebook should exit non-zero"
+            exit 1
+          fi

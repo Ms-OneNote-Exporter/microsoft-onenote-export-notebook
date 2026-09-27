@@ -32,7 +32,7 @@ async function tryDirectDownload(page, url, outputPath) {
             }
         });
 
-        let download = await downloadPromise;
+        const download = await downloadPromise;
         if (download) {
             await download.saveAs(outputPath);
             Logger.debug(`      [Strategy: Direct] Successfully captured download from cloud page.`);
@@ -313,16 +313,6 @@ async function tryUIClick(contentFrame, attachId, outputPath) {
     } catch (e) {
         Logger.debug(`      UI click strategy failed for ${attachId}: ${e.message}`);
     }
-    return false;
-}
-
-/**
- * Strategy 3: Network Interception (Advanced)
- * Placeholder for future implementation if needed (intercepting fetch/xhr).
- */
-async function tryNetworkInterception(page, url, outputPath) {
-    // Current downloadResource is essentially an unforced network request
-    // We could use page.route here if we need to mock headers.
     return false;
 }
 

@@ -42,7 +42,10 @@ function createMarkdownConverter() {
         filter: (node) => node.nodeName === 'A' && node.getAttribute('data-internal-link'),
         replacement: (content, node) => {
             const linkId = node.getAttribute('data-internal-link');
-            const text = node.innerText.trim();
+            // OneNote renders plenty of links as a bare icon with no text. Using
+            // the href as the placeholder keeps the link resolvable, and the
+            // marker lets linkResolver swap in the real target and name.
+            const text = node.innerText.trim() || node.getAttribute('href') || 'link';
             // Use a specific marker for post-processing
             return `[[${text}]]<!-- onenote-link:${linkId} -->`;
         }
@@ -69,7 +72,12 @@ function createMarkdownConverter() {
         filter: (node) => node.nodeName === 'VIDEO' && node.getAttribute('data-local-video'),
         replacement: (content, node) => {
             const localId = node.getAttribute('data-local-video');
-            return `\n\n![[assets/${localId}.mp4]]\n\n`;
+            // exporter.js derives the extension from the video URL and rewrites
+            // this attribute to the final file name, extension included. Only
+            // fall back to .mp4 when nothing carries one, otherwise every
+            // non-mp4 video exported a dead link.
+            const fileName = localId.includes('.') ? localId : `${localId}.mp4`;
+            return `\n\n![[assets/${fileName}]]\n\n`;
         }
     });
 
@@ -108,9 +116,18 @@ function createMarkdownConverter() {
     td.addRule('tableCells', {
         filter: (node) => (node.nodeName === 'TD' || node.nodeName === 'TH') ||
             (node.getAttribute('role') === 'rowheader' || node.getAttribute('role') === 'columnheader'),
-        replacement: function (content, node) {
-            // Trim and ensure no newlines inside cells for GFM compat
-            return '| ' + content.trim().replace(/\n/g, ' ') + ' ';
+        replacement: function (content) {
+            // Trim and ensure no newlines inside cells for GFM compat, then
+            // escape any literal pipe. An unescaped '|' silently adds a column
+            // and shifts every cell after it, so a note containing "a | b" was
+            // being corrupted. The lookbehind skips a pipe that is already
+            // escaped. Known limit: Turndown has already escaped any literal
+            // backslash by the time content reaches here, so source text that
+            // is literally `\|` still ends up with an odd number of
+            // backslashes. That is vanishingly rare in a table cell and not
+            // worth contorting the rule for.
+            const text = content.replace(/\s+/g, ' ').trim().replace(/(?<!\\)\|/g, '\\|');
+            return '| ' + text + ' ';
         }
     });
 

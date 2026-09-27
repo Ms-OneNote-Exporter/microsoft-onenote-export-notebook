@@ -13,7 +13,6 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { listNotebooks, openNotebook, openNotebookByLink } = require('./navigator');
-const logger = require('./utils/logger');
 
 const args = process.argv.slice(2);
 const get = (flag) => { const i = args.indexOf(flag); return i !== -1 ? args[i + 1] : null; };

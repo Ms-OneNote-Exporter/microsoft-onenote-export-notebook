@@ -21,7 +21,7 @@
   "scripts": {
     "start": "node src/index.js",
     "export": "node src/index.js export",
-    "test": "jest --passWithNoTests",
+    "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint ."
   },
