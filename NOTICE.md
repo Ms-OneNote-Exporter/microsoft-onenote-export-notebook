@@ -45,3 +45,13 @@ Microsoft does not offer a convenient way to export a whole OneNote notebook,
 and the Graph API path is not a usable substitute: it caps page retrieval and
 requires Entra admin rights. The aim is a straightforward way to get your own
 notes out.
+
+## Third-party content in this repository
+
+`docs/graphapi-sharepoint-limit-evidence.pdf` is a printout of a public
+Microsoft Q&A page documenting the Graph API page limit, kept here as evidence
+for the limitation described above. **It is Microsoft's content, not this
+project's, and it is not covered by the MIT licence above.** It is included for
+reference and quotation. Its source is:
+
+<https://learn.microsoft.com/en-us/answers/questions/2276682/onenote-api-fails-with-large-sharepoint-document-l>
