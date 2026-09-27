@@ -12,6 +12,26 @@ const sanitize = require('sanitize-filename');
 
 const { downloadAttachment } = require('./downloadStrategies');
 
+/**
+ * Sanitises a OneNote name for use as a file or directory name, guaranteeing a
+ * non-empty result.
+ *
+ * `sanitize-filename` legitimately returns '' for names that are entirely
+ * illegal characters or Windows-reserved words ('...', '..', '   ', 'CON').
+ * `path.join(outputDir, '')` is just `outputDir`, so without a fallback such a
+ * section would be written into its parent's directory and interleave with its
+ * siblings; a page in that state would be written to a file literally named
+ * '.md'.
+ *
+ * @param {string} name - Raw name from OneNote
+ * @param {string} fallback - Name to use when nothing usable survives
+ * @returns {string} A non-empty, path-safe name
+ */
+function safeName(name, fallback) {
+    const cleaned = sanitize(String(name ?? '').trim()).trim();
+    return cleaned.length > 0 ? cleaned : fallback;
+}
+
 // Download a resource (image, video) via HTTP request with retry logic
 // options.timeout  - HTTP request timeout in ms (default 60 000)
 // options.onError  - optional (msg) => void callback called on final failure
@@ -96,7 +116,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         if (processedItems.has(item.id)) continue;
 
         if (item.type === 'group') {
-            const groupName = sanitize(item.name);
+            const groupName = safeName(item.name, 'Untitled group');
             const groupDir = path.join(outputDir, groupName);
             await fs.ensureDir(groupDir);
 
@@ -114,7 +134,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 if (options.dodump) {
                     const dumpDir = await logger.getDumpDir();
                     const displayPath = logger.getDumpDisplayPath();
-                    const dumpPath = path.join(dumpDir, `debug_group_${sanitize(item.name)}.html`);
+                    const dumpPath = path.join(dumpDir, `debug_group_${safeName(item.name, 'group')}.html`);
                     await fs.writeFile(dumpPath, await contentFrame.content());
                 }
                 await processSections(contentFrame, groupDir, td, options, pageIdMap, processedItems, item.id, stats);
@@ -149,7 +169,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
             isLocked = await isSectionLocked(contentFrame);
         }
 
-        const baseSectionName = sanitize(item.name);
+        const baseSectionName = safeName(item.name, 'Untitled section');
 
         const isHeadless = !options.notheadless;
         if (isLocked && (options.nopassasked || isHeadless)) {
@@ -215,14 +235,14 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 if (options.dodump) {
                     const dumpDir = await logger.getDumpDir();
                     const displayPath = logger.getDumpDisplayPath();
-                    const pageDumpPath = path.join(dumpDir, `debug_page_${sanitize(pageInfo.name)}.html`);
+                    const pageDumpPath = path.join(dumpDir, `debug_page_${safeName(pageInfo.name, 'page')}.html`);
                     await fs.writeFile(pageDumpPath, await contentFrame.content());
                 }
 
                 const content = await getPageContent(contentFrame);
 
                 // Determine unique filename
-                let baseName = sanitize(pageInfo.name || 'Untitled');
+                let baseName = safeName(pageInfo.name, 'Untitled');
                 let sanitizedNoteName = baseName;
                 let collisionCount = 1;
                 while (usedNames.has(sanitizedNoteName)) {
@@ -245,7 +265,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
                     // Helper to get unique filename in assets dir
                     const getUniqueAssetPath = (base, ext) => {
-                        let name = sanitize(base);
+                        let name = safeName(base, 'file');
                         let fullPath = path.join(assetDir, `${name}.${ext}`);
                         let counter = 1;
                         while (fs.existsSync(fullPath)) {
@@ -355,6 +375,10 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
  * @param {boolean} [options.notheadless] - Visible browser
  * @param {boolean} [options.dodump] - HTML debug dumps
  * @param {boolean} [options.nopassasked] - Skip password-protected sections
+ * @returns {Promise<{totalPages: number, totalAssets: number}>} Export statistics
+ * @throws {Error} If the export fails for any reason. The error is deliberately
+ *   NOT swallowed: callers (and therefore the process exit code) must be able to
+ *   tell a failed export from an empty one.
  */
 async function runExport(options = {}) {
     let session;
@@ -397,7 +421,7 @@ async function runExport(options = {}) {
             }
 
             const baseDir = options.exportDir || path.resolve(__dirname, '../output');
-            const outputBase = path.resolve(baseDir, sanitize(notebookName));
+            const outputBase = path.resolve(baseDir, safeName(notebookName, 'Notebook'));
             await fs.ensureDir(outputBase);
             const td = createMarkdownConverter();
 
@@ -419,7 +443,7 @@ async function runExport(options = {}) {
             logger.info(`Total Pages: ${stats.totalPages}`);
             logger.info(`Total Assets: ${stats.totalAssets}`);
             logger.info(`Files saved in: ${outputBase}`);
-            return;
+            return stats;
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -429,8 +453,18 @@ async function runExport(options = {}) {
         const { notebooks } = session;
 
         if (notebooks.length === 0) {
-            logger.warn('No notebook have been found.');
+            logger.warn('No notebooks have been found.');
             logger.warn('Remember: you can export a notebook by using the --notebook-link <url> option.');
+
+            // A caller that named a notebook asked for a specific export. Finding
+            // nothing is a failure for them, not a clean no-op, so it must not
+            // exit 0 and look like a successful run.
+            if (options.notebook) {
+                throw new Error(
+                    `Notebook "${options.notebook}" was not found: the notebook list came back empty. ` +
+                    'Check the name, or use --notebook-link <url>.'
+                );
+            }
             return;
         }
 
@@ -510,7 +544,7 @@ async function runExport(options = {}) {
             }
 
             const baseDir = options.exportDir || path.resolve(__dirname, '../output');
-            const outputBase = path.resolve(baseDir, sanitize(selectedNotebook.name));
+            const outputBase = path.resolve(baseDir, safeName(selectedNotebook.name, 'Notebook'));
             await fs.ensureDir(outputBase);
             const td = createMarkdownConverter();
 
@@ -534,10 +568,13 @@ async function runExport(options = {}) {
             logger.info(`Total Pages: ${stats.totalPages}`);
             logger.info(`Total Assets: ${stats.totalAssets}`);
             logger.info(`Files saved in: ${outputBase}`);
+            return stats;
         }
 
-    } catch (e) {
-        logger.error('Export failed:', e);
+        // Only reachable when the notebook picker produced no selection, which
+        // cannot happen: the picker either yields a notebook or throws.
+        throw new Error('Export finished without selecting a notebook.');
+
     } finally {
         if (session && session.browser) {
             logger.debug('Closing browser...');
