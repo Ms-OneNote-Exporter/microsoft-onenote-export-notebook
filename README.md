@@ -14,6 +14,14 @@ GraphAPI has following limitation :
  => look by youself: https://learn.microsoft.com/en-us/answers/questions/2276682/onenote-api-fails-with-large-sharepoint-document-l 
  - you need your entra admin to provide you with rights to use MSEntra GraphAPI
 
+That Microsoft Q&A thread is kept in this repository as
+[`docs/graphapi-sharepoint-limit-evidence.pdf`](docs/graphapi-sharepoint-limit-evidence.pdf),
+so the claim above can be checked without following a link that may one day move
+or disappear. It is a **printout of a public Microsoft Q&A page** — the content
+is Microsoft's, not this project's; the file is quoted as evidence and is not
+covered by this project's MIT licence. Its source URL is printed on the first
+page.
+
 
 This is a standalone CLI tool for exporting Microsoft OneNote notebooks using Playwright with authentication state loaded from a JSON file (produced by [microsoft-webauth](https://github.com/Ms-OneNote-Exporter/microsoft-webauth)).
 
