@@ -1,8 +1,20 @@
 {
-  "name": "microsoft-onenote-export-notebook-playwright",
-  "version": "1.0.0",
+  "name": "@msout/microsoft-onenote-export-notebook",
+  "version": "0.1.0",
   "description": "Export Microsoft OneNote notebook to Obsidian Markdown via Playwright — extracted from MSOneNote Exporter",
   "main": "src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook.git"
+  },
+  "homepage": "https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook#readme",
+  "bugs": {
+    "url": "https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues"
+  },
+  "files": [
+    "src/",
+    "NOTICE.md"
+  ],
   "bin": {
     "onenote-export-nb": "./src/index.js"
   },
