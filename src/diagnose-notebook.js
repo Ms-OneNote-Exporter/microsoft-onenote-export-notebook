@@ -52,7 +52,7 @@ async function diagnoseNotebook() {
     } else {
         console.log('[DIAG] Listing notebooks to find:', notebookName);
         session = await listNotebooks({ authFile, notheadless: true, keepOpen: true });
-        const { notebooks, browser, page, scrapeTarget } = session;
+        const { notebooks, browser, context, page } = session;
         console.log(`[DIAG] Found ${notebooks.length} notebooks.`);
 
         const nb = notebooks.find(n => n.name === notebookName);
@@ -63,8 +63,12 @@ async function diagnoseNotebook() {
         }
 
         console.log(`[DIAG] Opening notebook: ${nb.name} (id: ${nb.id})`);
-        await openNotebook(page, scrapeTarget, nb.id);
-        session = { browser, page };
+
+        // openNotebook(listingPage, context, browser, notebookId) returns a NEW
+        // session whose `page` is the editor tab the click opened. Keep that page:
+        // the listing page has no section list, so every frame dump below would
+        // otherwise be taken from the wrong document.
+        session = await openNotebook(page, context, browser, nb.id);
     }
 
     const { browser, page } = session;
