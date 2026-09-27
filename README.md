@@ -67,6 +67,31 @@ node src/index.js export \
 | `--notheadless` | Run in visible browser mode (useful for debugging / password-protected sections) |
 | `--dodump` | Dump raw HTML content to `logs/dumps/` for debugging |
 | `--nopassasked` | Skip password-protected sections instead of pausing to ask |
+| `--non-interactive` | Run unattended (containers/CI). Requires `--notebook` or `--notebook-link`, and implies `--nopassasked` |
+
+## Unattended / container use
+
+Two parts of the tool ask for human input: the notebook picker (when neither
+`--notebook` nor `--notebook-link` is given) and the keypress that waits for you
+to unlock a password-protected section. In a container, CI or a service worker
+there is no terminal, so both would wait forever instead of failing.
+
+`--non-interactive` closes both holes:
+
+- it fails immediately (exit code 2) if no notebook was specified
+- it implies `--nopassasked`, so locked sections are skipped rather than awaited
+- every remaining prompt path also checks for a TTY and raises a clear error
+
+```bash
+node src/index.js export \
+  --auth-file /data/output/auth.json \
+  --notebook "My Notebook" \
+  --output-dir /data/output \
+  --non-interactive
+```
+
+Password-protected sections are written as `SectionName [passProtected]/`
+placeholder directories, so their presence stays visible in the export.
 
 ## Output
 
