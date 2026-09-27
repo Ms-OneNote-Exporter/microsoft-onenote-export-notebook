@@ -49,7 +49,29 @@ async function downloadResource(page, url, outputPath, options = {}) {
     });
 }
 
+/**
+ * True only when a human can actually answer a prompt.
+ *
+ * Containers, CI runners and service workers have no TTY attached. In that
+ * situation `readline` and `enquirer` do not error — they wait forever, so an
+ * unattended export hangs silently instead of failing. Every interactive branch
+ * below is guarded with this.
+ *
+ * @returns {boolean}
+ */
+function hasTty() {
+    return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
 function waitForEnter(message) {
+    if (!hasTty()) {
+        return Promise.reject(new Error(
+            'Refusing to wait for keyboard input: no terminal is attached to stdin. ' +
+            'Re-run with --nopassasked to skip password-protected sections, ' +
+            'or --non-interactive to fail fast on any prompt.'
+        ));
+    }
+
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
@@ -154,6 +176,12 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         processedItems.add(item.id);
 
         while (isLocked) {
+            if (!hasTty()) {
+                throw new Error(
+                    `Section "${item.name}" is password protected and cannot be unlocked without a terminal. ` +
+                    'Re-run with --nopassasked to skip password-protected sections.'
+                );
+            }
             logger.warn(`Section "${item.name}" is password protected.`);
             logger.info('Please switch to the browser window, unlock the section manually, and then return here.');
             await waitForEnter('Press ENTER here once the section is unlocked to continue...');
@@ -416,6 +444,14 @@ async function runExport(options = {}) {
                 throw new Error(`Notebook "${options.notebook}" not found in list. Available: ${notebooks.map(n => n.name).join(', ')}`);
             }
         } else {
+            if (!hasTty()) {
+                throw new Error(
+                    'Refusing to show the notebook picker: no terminal is attached to stdin. ' +
+                    'Pass --notebook <name> or --notebook-link <url> to run unattended ' +
+                    '(or --non-interactive to turn this into a startup error).'
+                );
+            }
+
             const prompt = new Select({
                 name: 'notebook',
                 message: 'Select a notebook to export:',
@@ -510,4 +546,4 @@ async function runExport(options = {}) {
     }
 }
 
-module.exports = { runExport };
+module.exports = { runExport, hasTty };
