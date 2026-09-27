@@ -486,7 +486,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | ID | Sev | Area | One-line summary | Status |
 |----|-----|------|------------------|--------|
 | F-01 | **Critical** | `exporter.js:539` | Failed export exits 0 — `runExport` swallows every error, disabling all failure detection | **fixed** `4a5e4ce` |
-| F-20 | High | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verifies the name ⇒ wrong notebook can be exported | open — needs a STEP 1 dump |
+| F-20 | High | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verifies the name ⇒ wrong notebook can be exported | **fixed** `d878ceb` (dump still wanted to confirm the multi-table layout) |
 | F-24 | High | `parser.js:72` | Video wikilinks hardcode `.mp4` while files are written with the URL's real extension | **fixed** `a306c9d` |
 | F-25 | High | `parser.js:113` | Unescaped `|` in table cells silently adds phantom columns | **fixed** `a306c9d` |
 | F-29 | High | `linkResolver.js:19` | Substring id matching with no specificity ordering ⇒ links resolve to the **wrong page** | **fixed** `a306c9d` |
@@ -500,8 +500,10 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-30 | Medium | `linkResolver.js:81` | Windows `\` separators break Obsidian wikilinks | **fixed** `a306c9d` |
 | F-31 | Low | `linkResolver.js:10` | Resolver returns `void`; unresolved links are invisible | **fixed** `a306c9d` |
 | F-02 | Medium | `scrapers.js:1` | **Corrected:** unused `logger` import ⇒ 4 `console.*` calls bypass `logs/app.log`. Those calls are inside browser-context `evaluate()` callbacks, so the logger is not available there. | partially fixed `a306c9d` |
-| F-21 | Medium | `exporter.js:122` | `navigateBack` failure ignored ⇒ traversal continues against the wrong tree | open |
+| F-21 | Medium | `exporter.js:122` | `navigateBack` failure ignored ⇒ traversal continues against the wrong tree | **fixed** `d878ceb` |
+| F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | **fixed** `d878ceb` |
 | F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | open |
+| F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | open |
 | F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | open |
@@ -559,6 +561,41 @@ all Low/Info items · `npm test` real tests + CI workflow.
 5. README inaccuracies found during the review are listed (fix or document).
 6. Residual risk that cannot be verified without live OneNote credentials is stated
    explicitly rather than assumed away.
+
+## 8a. Session log
+
+| Commit | What |
+|--------|------|
+| `87908fa` | Plan, decisions, dump index, `dumps/` ignore rules |
+| `4e92a07` | ESLint flat config, `npm run lint`, green `npm test` baseline |
+| `316294f` | Phase 2 findings, 50 of them, each with executed evidence |
+| `4a5e4ce` | **F-01** exit codes, **F-14** `safeName` |
+| `c35c3b5` | **F-42** `diagnose-notebook.js` arity + editor session |
+| `98347e8` | **F-12** `--version` from `package.json` |
+| `a306c9d` | **F-24/25/26/29/30/31/17/15** data fidelity, failure reporting, 53 tests, CI, lint cleanups |
+| `99b6162` | Formatting tidy of the `no-else-return` autofix |
+| `e2debbb` | Register status; **F-02 corrected** |
+| `d878ceb` | **F-20** name verification, **F-21** `navigateBack`, **F-22** empty-group warning, unhandled-rejection guard |
+
+**Fixed: 1 Critical, 5 High, 9 Medium, 13 Low/Info.** Open: F-32, F-33, F-36, F-37, F-40,
+F-44, F-45, F-46, F-47, F-48, F-23, and the Low/Info tail.
+
+### Next session, in priority order
+
+1. **F-44 / F-45 / F-46 — Docker.** `COPY . /app` instead of `git clone`, `npm ci`, pin the
+   base image, non-root user, `.dockerignore`, `--init` + `/dev/shm` for Chromium; assert the
+   export exit status in `entrypoint.sh`; fix the `oneexp_` vs `one-` name mismatch and the
+   hardcoded sibling-repo path in `start-container.sh`. Self-contained, no product risk.
+2. **F-36 / F-37 — logger.** Add level gating (a `--verbose` flag, or honour an env var) and
+   move the log path out of `node_modules` for global installs. Touches every call site's
+   behaviour, so it wants its own commit and a note in the README.
+3. **F-32 — per-attachment time budget.** Cap the retry × strategy multiplication, and record
+   per-strategy success counts so the ~72s Office Online path can be justified or dropped.
+4. **F-23 — extract the attachment heuristics** into a pure module with tests, now that the
+   harness exists. Biggest testability win, and a precondition for the fixture tests.
+5. **F-40 / F-48 — `auth.json` validation, 0600 dumps, close the browser on context failure.**
+6. **Duplicated `runExport` flow** (44% textual overlap) — only after the fixture tests exist.
+7. **README** (F-50) and the remaining Low/Info items.
 
 ## 9. Open questions
 
