@@ -53,9 +53,9 @@ async function dismissMcasInterstitial(page) {
                 logger.warn('MCAS post-dismiss network idle timeout — continuing anyway...');
             }
             return true;
-        } 
-            logger.warn('MCAS: could not find "Continue in current browser" submit button.');
-        
+        }
+
+        logger.warn('MCAS: could not find "Continue in current browser" submit button.');
     } catch (e) {
         logger.warn(`MCAS interstitial dismissal failed: ${e.message}`);
     }
