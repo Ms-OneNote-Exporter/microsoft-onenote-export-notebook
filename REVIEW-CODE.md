@@ -134,7 +134,7 @@ Config decisions worth recording:
 
 | ID | Sev | Location | Finding |
 |----|-----|----------|---------|
-| F-02 | Medium | `scrapers.js:1` + `:380,410,443,446` | `logger` is imported and **never used**; the file logs via `console.*` instead. This is the root cause of the 4 console calls, not an independent issue — and it means scraper diagnostics never reach `logs/app.log`. Fixing the import fixes the cause. |
+| F-02 | Medium | `scrapers.js:1` + `:380,410,443,446` | **Corrected:** the `console.*` calls are inside `frame.evaluate()` callbacks running in the browser, where the Node logger does not exist. Real defect: those diagnostics never reach `logs/app.log`. See Phase 2 note. |
 | F-03 | Low | `scrapers.js:621` | `while (node = walker.nextNode())` — assignment in condition (`no-cond-assign`). |
 | F-04 | Low | `exporter.js:391`, `scrapers.js:478` | Two empty `catch (e) { }` blocks that swallow errors with no log at all. |
 | F-05 | Low | `exporter.js:116,217` | `displayPath` assigned, never used (dead code). |
@@ -243,8 +243,16 @@ One hypothesis was **disproved** by running it — see F-19.
   traversal silently continues against the wrong tree.
 
 **`scrapers.js`**
-- F-02 (Medium) — unused `logger` import is the root cause of 4 `console.*` calls; scraper
-  diagnostics never reach `logs/app.log`.
+- F-02 (Medium, **finding corrected during remediation**) — originally recorded as
+  "unused `logger` import; route the 4 `console.*` calls through the logger".
+  Implementing that would have been a **runtime bug**: those calls sit inside
+  `frame.evaluate()` callbacks, which Playwright serialises and executes *in the
+  browser*, where a Node module is not in scope — `logger.debug(...)` there throws
+  `logger is not defined` and kills page extraction. The `console.*` calls are
+  unavoidable, not careless. The real, smaller defect is that these diagnostics can
+  never reach `logs/app.log`; the correct fix is to return diagnostic data from
+  `evaluate()` and log it on the Node side. The misleading unused import is now removed
+  and the constraint is documented at the top of the file.
 - F-22 (Medium) — the group lookup returns `[]` when no container is found
   (`scrapers.js:52, 57`), and the caller only logs at `debug` level when a `parentId` is
   present (`exporter.js:89-93`). An entire section group and its subtree can vanish from the
@@ -414,22 +422,35 @@ One hypothesis was **disproved** by running it — see F-19.
   committed or fed to CI.
 - **Exit criteria:** a security/ops section with severity-ranked items.
 
-### Phase 5 — Test strategy & tooling plan (M)
-- **Unit (no browser):** `utils/retry`, `utils/logger`, `parser` (golden HTML → Markdown),
-  `linkResolver`, filename/asset-naming helpers, and the attachment heuristics from
-  `scrapers.js` once extracted into a pure module.
-- **Fixture-based (primary):** sanitise the real captures catalogued in
-  `dumps/20260927/INDEX.md` into committed fixtures under `test/fixtures/`, then drive
-  `getSections`/`getPages`/`getPageContent` against a minimal fake `frame` implementing
-  `evaluate/$/$$eval`. This is the single highest-value test investment: it covers D4 and
-  protects the most brittle code. Each fixture keeps a back-reference to its `INDEX.md`
-  STEP so a dump can be re-derived when the DOM changes.
-- **Golden output:** convert the 3 existing `output/**/*.md` files into expected-output
-  fixtures.
-- **Tooling (approved):** ESLint flat config, `engines: { node: ">=18" }`, GitHub Actions
-  running lint + test, `npm ci` in Docker, optional `husky`/`lint-staged`.
-- **Exit criteria:** ordered test backlog (what to write first, expected effort, what bug
-  it guards).
+### Phase 5 — Test strategy & tooling plan (M) — **test harness DONE; fixtures blocked on dumps**
+
+**Landed:** ESLint flat config (`npm run lint`, now **0 errors / 0 warnings**), GitHub
+Actions workflow (`.github/workflows/ci.yml`: `npm ci` → lint → test → CLI smoke test
+asserting `--version`, `--help` and a non-zero exit for a usage error), and **53 tests**
+across 5 suites:
+
+| Suite | Covers |
+|-------|--------|
+| `test/parser.test.js` | Turndown rules: video extension, pipe escaping, empty links, attachments, embeds, table furniture |
+| `test/linkResolver.test.js` | Id specificity, cleaned-UUID matching, `onenote:` fallback, self-links, forward slashes, unresolved links |
+| `test/naming.test.js` | `safeName` fallbacks (incl. `...`, `..`, `CON`, `null`), `uniqueName` collision counting |
+| `test/retry.test.js` | Success/retry/give-up, final-error propagation, exponential backoff and cap |
+| `test/reportSummary.test.js` | Clean run vs failed run messaging, per-category counts, link counts, fresh stats object |
+
+Every data-fidelity fix (F-24, F-25, F-26, F-29) was written as a test **first**, watched
+fail against the old code, and only then fixed. `--passWithNoTests` has been dropped now
+that real tests exist.
+
+**Still to do once `dumps/20260927/` is populated** (scrubbed per the §0 decisions):
+- Convert the raw captures into committed fixtures under `test/fixtures/`, each carrying a
+  back-reference to its `INDEX.md` STEP.
+- Drive `getSections` / `getPages` / `getPageContent` against a minimal fake `frame`
+  implementing `evaluate/$/$$eval` — the highest-value remaining investment, since it covers
+  D4 and protects the most brittle code (F-22, F-23).
+- Reproduce or refute **F-20** (wrong-notebook risk) against the STEP 1 notebooks-list DOM.
+- Turn the 3 sample files in `output/**/*.md` into golden expected-output fixtures.
+
+- **Exit criteria:** ordered test backlog exists (above); fixture half blocked on input.
 
 ### Phase 6 — Report & remediation ladder (S + fix time)
 - Consolidate all findings into this file using the format in §7.
@@ -462,35 +483,37 @@ One hypothesis was **disproved** by running it — see F-19.
 **50 findings: 1 Critical, 8 High, 24 Medium, 17 Low/Info.** Full evidence for each is in
 the Phase 2 section above; this table is the index and the fix ladder.
 
-| ID | Sev | Area | One-line summary |
-|----|-----|------|------------------|
-| F-01 | **Critical** | `exporter.js:539` | Failed export exits 0 — `runExport` swallows every error, disabling all failure detection |
-| F-20 | High | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verifies the name ⇒ wrong notebook can be exported |
-| F-24 | High | `parser.js:72` | Video wikilinks hardcode `.mp4` while files are written with the URL's real extension |
-| F-25 | High | `parser.js:113` | Unescaped `|` in table cells silently adds phantom columns |
-| F-29 | High | `linkResolver.js:19` | Substring id matching with no specificity ordering ⇒ links resolve to the **wrong page** |
-| F-44 | High | `Dockerfile:8` | Image `git clone`s `main` from GitHub; local code is never in the image |
-| F-42 | High | `diagnose-notebook.js:66` | Diagnostic script calls a 4-param function with 3 args ⇒ guaranteed TypeError |
-| F-14 | High | `exporter.js:99,152,169` | `sanitize()` returning `''` collapses a section into its parent directory |
-| F-21 | Medium | `exporter.js:122` | `navigateBack` failure ignored ⇒ traversal continues against the wrong tree |
-| F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link |
-| F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set |
-| F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded |
-| F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install |
-| F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails |
-| F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content |
-| F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 |
-| F-15 | Medium | `exporter.js:169` | Sections with equal sanitised names share one directory |
-| F-16 | Medium | `exporter.js:247` | Re-runs duplicate assets (`name_1`, `name_2`, …) instead of refreshing |
-| F-17 | Medium | `exporter.js:87,340` | No failure accounting: partial exports look clean |
-| F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level |
-| F-23 | Medium | `scrapers.js:302` | 20+ untestable inline heuristics; extension regex duplicated 3× |
-| F-26 | Medium | `parser.js:41` | Text-less internal links become `[[]]` → `[[path|]]` |
-| F-30 | Medium | `linkResolver.js:81` | Windows `\` separators break Obsidian wikilinks |
-| F-02 | Medium | `scrapers.js:1` | Unused `logger` import ⇒ 4 `console.*` calls bypass `logs/app.log` |
-| F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally |
-| F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" |
-| F-12…F-13, F-18, F-19, F-27, F-28, F-31, F-34, F-35, F-38, F-39, F-41, F-43, F-49, F-50 | Low/Info | various | Polish, dead code, doc drift, latent fragility — see Phase 2 |
+| ID | Sev | Area | One-line summary | Status |
+|----|-----|------|------------------|--------|
+| F-01 | **Critical** | `exporter.js:539` | Failed export exits 0 — `runExport` swallows every error, disabling all failure detection | **fixed** `4a5e4ce` |
+| F-20 | High | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verifies the name ⇒ wrong notebook can be exported | open — needs a STEP 1 dump |
+| F-24 | High | `parser.js:72` | Video wikilinks hardcode `.mp4` while files are written with the URL's real extension | **fixed** `a306c9d` |
+| F-25 | High | `parser.js:113` | Unescaped `|` in table cells silently adds phantom columns | **fixed** `a306c9d` |
+| F-29 | High | `linkResolver.js:19` | Substring id matching with no specificity ordering ⇒ links resolve to the **wrong page** | **fixed** `a306c9d` |
+| F-44 | High | `Dockerfile:8` | Image `git clone`s `main` from GitHub; local code is never in the image | open |
+| F-42 | High | `diagnose-notebook.js:66` | Diagnostic script calls a 4-param function with 3 args ⇒ guaranteed TypeError | **fixed** `c35c3b5` |
+| F-14 | High | `exporter.js:99,152,169` | `sanitize()` returning `''` collapses a section into its parent directory | **fixed** `4a5e4ce` |
+| F-12 | Low | `index.js:9` | `--version` reported 1.0.0 while `package.json` says 0.1.1 | **fixed** `98347e8` |
+| F-15 | Medium | `exporter.js:169` | Sections with equal sanitised names share one directory | **fixed** `a306c9d` |
+| F-17 | Medium | `exporter.js:87,340` | No failure accounting: partial exports look clean | **fixed** `a306c9d` |
+| F-26 | Medium | `parser.js:41` | Text-less internal links become `[[]]` → `[[path|]]` | **fixed** `a306c9d` |
+| F-30 | Medium | `linkResolver.js:81` | Windows `\` separators break Obsidian wikilinks | **fixed** `a306c9d` |
+| F-31 | Low | `linkResolver.js:10` | Resolver returns `void`; unresolved links are invisible | **fixed** `a306c9d` |
+| F-02 | Medium | `scrapers.js:1` | **Corrected:** unused `logger` import ⇒ 4 `console.*` calls bypass `logs/app.log`. Those calls are inside browser-context `evaluate()` callbacks, so the logger is not available there. | partially fixed `a306c9d` |
+| F-21 | Medium | `exporter.js:122` | `navigateBack` failure ignored ⇒ traversal continues against the wrong tree | open |
+| F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | open |
+| F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
+| F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | open |
+| F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | open |
+| F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | open |
+| F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally | open (safe-ish now that F-01 is fixed) |
+| F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | open |
+| F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | open |
+| F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | open |
+| F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | open |
+| F-23 | Medium | `scrapers.js:302` | 20+ untestable inline heuristics; extension regex duplicated 3× | open |
+| F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11 | Low/Info | various | Dead code, empty catches, `no-cond-assign`, unused params, useless escapes | **fixed** `a306c9d` |
+| F-13, F-16, F-18, F-19, F-27, F-28, F-34, F-35, F-38, F-39, F-41, F-43, F-49, F-50 | Low/Info | various | Polish, doc drift, latent fragility | open |
 
 Severity scale: **Critical** = silent data loss / false success / security ·
 **High** = wrong output or hangs · **Medium** = maintainability, perf, portability ·
