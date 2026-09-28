@@ -558,7 +558,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | **fixed** — validated pre-launch, browser closed on context failure, loose-permission warning |
 | F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally | **closed by decision** — the unconditional message is now intentional (see note) |
 | F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | **fixed** — name, image, output dir and auth file all overridable; `--init` + `--shm-size=1g` added |
-| F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | open |
+| F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | **fixed (warn, by decision)** — classified and logged once per host; nothing blocked |
 | F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | **fixed** — dirs 0700, files 0600, existing app.log tightened at startup |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | open |
 | F-23 | Medium | `scrapers.js:302` | 20+ untestable inline heuristics; extension regex duplicated 3× | open |
