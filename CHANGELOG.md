@@ -4,7 +4,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-09-28
+
+An export had not completed since 12:17 on 2026-09-28. Every run since reached
+the same line and died a second later — with the browser window open on screen,
+showing the notebook, fully rendered:
+
+```
+[SUCCESS] Found content frame (navigation): https://…/onenoteframe.aspx?…
+[INFO]    Scanning sections...
+[WARN]    Timeout waiting for .sectionList, trying to scrape anyway...
+frame.evaluate: Target page, context or browser has been closed
+    at getSections (src/scrapers.js:15:18)
+```
+
+`Target page, context or browser has been closed`, raised against a tab that was
+sitting there working, is the tell: the target was not dying, the tool was
+closing it.
+
+Patch rather than minor — the CLI, its options and the exit codes are all
+unchanged. This restores behaviour 0.2.0 shipped working. Verified end to end
+against a real notebook: 19 pages, 12 assets, 3 internal links resolved, 0
+unresolved, exit 0.
 
 ### Fixed
 
