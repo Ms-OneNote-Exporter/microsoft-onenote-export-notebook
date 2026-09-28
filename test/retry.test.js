@@ -118,6 +118,18 @@ describe('withRetry', () => {
         await expect(withRetry(() => 42, { silent: true })).resolves.toBe(42);
     });
 
+    // The trailing `throw lastError` was unreachable, so a misconfigured
+    // maxAttempts would have resolved with undefined instead of rejecting.
+    it('rejects rather than resolving when maxAttempts is zero', async () => {
+        const fn = jest.fn();
+        await expect(withRetry(fn, { maxAttempts: 0, silent: true })).rejects.toThrow(/was not attempted/);
+        expect(fn).not.toHaveBeenCalled();
+    });
+
+    it('rejects rather than resolving for a negative maxAttempts', async () => {
+        await expect(withRetry(() => 'never', { maxAttempts: -1, silent: true })).rejects.toThrow(/was not attempted/);
+    });
+
     it('defaults to a single attempt when maxAttempts is 1', async () => {
         const fn = jest.fn().mockRejectedValue(new Error('once'));
         await expect(withRetry(fn, { initialDelayMs: 1, silent: true })).rejects.toThrow('once');

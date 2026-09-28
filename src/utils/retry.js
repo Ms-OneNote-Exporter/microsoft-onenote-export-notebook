@@ -95,7 +95,10 @@ async function withRetry(fn, options = {}) {
         }
     }
 
-    throw lastError;
+    // Unreachable: the loop either returns, throws (permanent or exhausted), or
+    // falls through only if maxAttempts is 0 or negative. Kept as a guard so a
+    // misconfigured call still rejects rather than resolving with undefined.
+    throw lastError || new Error(`${operationName} was not attempted`);
 }
 
 module.exports = { withRetry, permanent, isPermanent };
