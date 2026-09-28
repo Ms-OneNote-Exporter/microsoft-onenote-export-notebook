@@ -196,7 +196,7 @@ async function listNotebooks(options = {}) {
  *
  * Clicking a notebook row in the new onenote.cloud.microsoft/notebooks page
  * opens the OneNote editor in a NEW popup/tab (SharePoint-hosted, e.g.
- * mobilutils-my.sharepoint.com/.../Doc.aspx).
+ * COMPANYNAME-my.sharepoint.com/.../Doc.aspx).
  *
  * This function:
  *  1. Subscribes to context.on('page') BEFORE clicking

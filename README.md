@@ -155,7 +155,7 @@ microsoft-onenote-list-notebook list --auth-file ../microsoft-webauth/auth.json
 # Then export
 node src/index.js export \
   --auth-file /path/to/auth.json \
-  --notebook "NB_Attached_WordsDocuments"
+  --notebook "My Notebook"
 ```
 
 ## Project Structure
