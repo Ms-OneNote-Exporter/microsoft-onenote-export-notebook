@@ -1,6 +1,6 @@
 {
   "name": "@msout/microsoft-onenote-export-notebook",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Export Microsoft OneNote notebook to Obsidian Markdown via Playwright — extracted from MSOneNote Exporter",
   "main": "src/index.js",
   "repository": {
@@ -13,6 +13,7 @@
   },
   "files": [
     "src/",
+    "CHANGELOG.md",
     "NOTICE.md"
   ],
   "bin": {
