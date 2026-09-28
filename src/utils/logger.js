@@ -1,13 +1,24 @@
 const chalk = require('chalk');
 const fs = require('fs-extra');
 const path = require('path');
+const { resolveLogDir } = require('./logPaths');
+
+/** Severity order, lowest first. A message is emitted if its level >= the threshold. */
+const LEVELS = { debug: 10, info: 20, step: 20, success: 20, warn: 30, error: 40 };
+
+/** Rotate app.log once it passes this size, so a long export cannot fill the disk. */
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
 
 class Logger {
     constructor() {
-        this.months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        this.logFilePath = path.resolve(__dirname, '../../logs/app.log');
-        
-         // Initialize dump directory name once per execution
+        this.logDir = resolveLogDir();
+        this.logFilePath = path.join(this.logDir, 'app.log');
+
+        // Debug output was previously unconditional, so it always appeared on
+        // stdout and in the log file. It is now off unless asked for.
+        this.level = Logger._initialLevel();
+
+        // Initialize dump directory name once per execution
         const now = new Date();
         const yyyy = now.getFullYear();
         const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -15,29 +26,112 @@ class Logger {
         const hh = String(now.getHours()).padStart(2, '0');
         const min = String(now.getMinutes()).padStart(2, '0');
 
-         // Format: YYYY-MM-DD_HHhMM
+        // Format: YYYY-MM-DD_HHhMM
         this.dumpSubDir = `${yyyy}-${mm}-${dd}_${hh}h${min}`;
 
-         // Ensure logs directory exists
-        fs.ensureDirSync(path.dirname(this.logFilePath));
+        // Ensure logs directory exists. Restricted permissions because the dump
+        // files written next to app.log contain the authenticated DOM of a real
+        // notebook: cookies, tenant hostnames and note content (F-48).
+        this._ensurePrivateDir(this.logDir);
+        this._tightenExistingLogFile();
+        this._rotateIfLarge();
     }
 
-    _getTimestamp() {
-        const now = new Date();
-        const month = this.months[now.getMonth()];
-        const day = String(now.getDate()).padStart(2, '0');
-        const time = now.toTimeString().split(' ')[0];
-        return `[${month} ${day} ${time}]`;
+    /**
+     * Brings an existing app.log down to owner-only.
+     *
+     * Files this process creates are 0600 from the start, but a log written by an
+     * earlier version - or before this fix existed - is still 0644, and
+     * appendFileSync's `mode` only applies at creation. One chmod at startup is
+     * enough to close that off.
+     */
+    _tightenExistingLogFile() {
+        try {
+            const stats = fs.statSync(this.logFilePath);
+            if ((stats.mode & 0o077) !== 0) {
+                fs.chmodSync(this.logFilePath, 0o600);
+            }
+        } catch (e) {
+            // No log file yet, or chmod unsupported: not fatal.
+        }
+    }
+
+    /**
+     * Reads the initial threshold from the environment.
+     *
+     * ONENOTE_EXPORT_LOG_LEVEL accepts debug|info|warn|error. Unset means info,
+     * which hides debug but keeps everything a user needs to follow an export.
+     *
+     * @returns {number} Numeric threshold
+     */
+    static _initialLevel() {
+        const requested = (process.env.ONENOTE_EXPORT_LOG_LEVEL || '').trim().toLowerCase();
+        return LEVELS[requested] ?? LEVELS.info;
+    }
+
+    /**
+     * Creates a directory and forces owner-only permissions on it.
+     *
+     * fs.ensureDirSync honours the process umask, so on a permissive umask the
+     * dumps would end up world-readable. chmod makes it explicit rather than
+     * dependent on the environment.
+     *
+     * @param {string} dir - Directory to create
+     */
+    _ensurePrivateDir(dir) {
+        fs.ensureDirSync(dir);
+        try {
+            fs.chmodSync(dir, 0o700);
+        } catch (e) {
+            // A filesystem that does not support chmod is not a reason to fail
+            // an export; the warning below is enough.
+        }
+    }
+
+    /**
+     * Rotates app.log to app.log.1 when it grows past MAX_LOG_BYTES.
+     *
+     * Exports run unattended for hours and log every page, so without this the
+     * log grows without bound.
+     */
+    _rotateIfLarge() {
+        try {
+            const stats = fs.statSync(this.logFilePath);
+            if (stats.size <= MAX_LOG_BYTES) return;
+            fs.moveSync(this.logFilePath, `${this.logFilePath}.1`, { overwrite: true });
+        } catch (e) {
+            // No log file yet, or it cannot be rotated: not fatal.
+        }
+    }
+
+    /**
+     * Raises or lowers the threshold at runtime.
+     * @param {string} name - One of debug|info|warn|error
+     */
+    setLevel(name) {
+        const level = LEVELS[(name || '').toLowerCase()];
+        if (level !== undefined) {
+            this.level = level;
+        }
+    }
+
+    /**
+     * True when a message at `level` should be emitted.
+     * @param {string} level - Message level
+     * @returns {boolean}
+     */
+    _enabled(level) {
+        return (LEVELS[level] ?? LEVELS.info) >= this.level;
     }
 
     /**
      * Returns the absolute path to the current session's dump directory.
-     * Ensures the directory exists.
+     * Ensures the directory exists, owner-only.
      * @returns {Promise<string>}
      */
     async getDumpDir() {
-        const dumpDir = path.resolve(__dirname, '../../logs/dumps', this.dumpSubDir);
-        await fs.ensureDir(dumpDir);
+        const dumpDir = path.join(this.logDir, 'dumps', this.dumpSubDir);
+        this._ensurePrivateDir(dumpDir);
         return dumpDir;
     }
 
@@ -46,11 +140,21 @@ class Logger {
      * @returns {string}
      */
     getDumpDisplayPath() {
-        return `logs/dumps/${this.dumpSubDir}`;
+        return path.relative(process.cwd(), path.join(this.logDir, 'dumps', this.dumpSubDir)) || '.';
+    }
+
+    _getTimestamp() {
+        const now = new Date();
+        const day = String(now.getDate()).padStart(2, '0');
+        const time = now.toTimeString().split(' ')[0];
+        // The year and timezone are included because a long unattended run can
+        // cross midnight, and two logs from different years otherwise look
+        // identical (F-38).
+        return `[${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${day} ${time}${tzOffset()}]`;
     }
 
     _stripColors(str) {
-         // eslint-disable-next-line no-control-regex
+        // eslint-disable-next-line no-control-regex
         return str.replace(/\u001b\[[0-9;]*m/g, '');
     }
 
@@ -60,12 +164,12 @@ class Logger {
         const levelTag = `[${level}]`;
         const coloredLevelTag = colorFunc(levelTag);
 
-         // Handle multi-line messages
+        // Handle multi-line messages
         let formattedMessage = '';
         if (typeof message === 'string' && message.includes('\n')) {
             formattedMessage = message.split('\n').map(line => `${coloredTimestamp} ${coloredLevelTag} ${line}`).join('\n');
         } else if (typeof message !== 'string') {
-             // Handle objects/errors
+            // Handle objects/errors
             try {
                 const stringified = JSON.stringify(message, null, 2);
                 formattedMessage = `${coloredTimestamp} ${coloredLevelTag} ${stringified}`;
@@ -76,7 +180,7 @@ class Logger {
             formattedMessage = `${coloredTimestamp} ${coloredLevelTag} ${message}`;
         }
 
-         // Write to log file (no colors)
+        // Write to log file (no colors)
         const plainTimestamp = timestamp;
         const plainLevelTag = levelTag;
         let plainMessage = '';
@@ -94,10 +198,30 @@ class Logger {
             plainMessage = `${plainTimestamp} ${plainLevelTag} ${message}`;
         }
 
-         // Append to log file
-        fs.appendFileSync(this.logFilePath, plainMessage + '\n');
+        // Append to log file
+        this._appendToLogFile(plainMessage + '\n');
 
         return formattedMessage;
+    }
+
+    /**
+     * Appends one already-formatted, colour-free line to app.log.
+     *
+     * The log file is created 0600. It is not chmod-ed on every write because that
+     * would be a syscall per log line; it is set once, when the file is created.
+     *
+     * @param {string} text - Line to append, newline included
+     */
+    _appendToLogFile(text) {
+        try {
+            const isNew = !fs.existsSync(this.logFilePath);
+            fs.appendFileSync(this.logFilePath, text, { mode: 0o600 });
+            if (isNew) {
+                fs.chmodSync(this.logFilePath, 0o600);
+            }
+        } catch (e) {
+            // Logging must never be the reason an export fails.
+        }
     }
 
     /** Generic log method for programmatic use */
@@ -111,21 +235,28 @@ class Logger {
     }
 
     info(message) {
+        if (!this._enabled('info')) return;
         process.stdout.write(this._formatMessage('INFO', message, chalk.blue) + '\n');
     }
 
     warn(message) {
+        if (!this._enabled('warn')) return;
         process.stdout.write(this._formatMessage('WARN', message, chalk.yellow) + '\n');
     }
 
     error(message, error = null) {
+        if (!this._enabled('error')) return;
         process.stderr.write(this._formatMessage('ERROR', message, chalk.red) + '\n');
         if (error) {
             if (error.stack) {
                 const stack = chalk.red(error.stack);
                 process.stderr.write(stack + '\n');
-                 // Also write stack to file
-                fs.appendFileSync(this.logFilePath, this._stripColors(stack) + '\n');
+                // Also write stack to file
+                try {
+                    fs.appendFileSync(this.logFilePath, this._stripColors(stack) + '\n');
+                } catch (e) {
+                    // See _appendToLogFile.
+                }
             } else {
                 process.stderr.write(this._formatMessage('ERROR', error, chalk.red) + '\n');
             }
@@ -133,16 +264,36 @@ class Logger {
     }
 
     success(message) {
+        if (!this._enabled('success')) return;
         process.stdout.write(this._formatMessage('SUCCESS', message, chalk.green) + '\n');
     }
 
     debug(message) {
+        if (!this._enabled('debug')) return;
         process.stdout.write(this._formatMessage('DEBUG', message, chalk.gray) + '\n');
     }
 
     step(message) {
+        if (!this._enabled('step')) return;
         process.stdout.write(this._formatMessage('STEP', message, chalk.magenta) + '\n');
     }
 }
 
+/**
+ * Renders the local UTC offset, e.g. "+02:00", so timestamps in the log are
+ * unambiguous across machines and daylight-saving changes.
+ * @returns {string}
+ */
+function tzOffset() {
+    // offsetMinutes is minutes behind UTC, hence the sign flip.
+    const offsetMinutes = -new Date().getTimezoneOffset();
+    const sign = offsetMinutes >= 0 ? '+' : '-';
+    const abs = Math.abs(offsetMinutes);
+    const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+    const mm = String(abs % 60).padStart(2, '0');
+    return `${sign}${hh}:${mm}`;
+}
+
 module.exports = new Logger();
+module.exports.LoggerClass = Logger;
+module.exports.LEVELS = LEVELS;

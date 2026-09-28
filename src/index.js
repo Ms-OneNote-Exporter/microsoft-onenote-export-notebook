@@ -21,7 +21,17 @@ program
     .option('--dodump', 'Dump HTML content to files for debugging')
     .option('--nopassasked', 'Skip password-protected sections instead of asking')
     .option('--non-interactive', 'Run unattended (containers/CI): requires --notebook or --notebook-link, and implies --nopassasked')
+    .option('-v, --verbose', 'Show debug output (debug logging is off by default)')
+    .option('-q, --quiet', 'Only show warnings and errors')
     .action(async (options) => {
+        // Log verbosity. Also settable without the CLI, for containers:
+        // ONENOTE_EXPORT_LOG_LEVEL=debug.
+        if (options.verbose) {
+            logger.setLevel('debug');
+        } else if (options.quiet) {
+            logger.setLevel('warn');
+        }
+
         // Map --output-dir to exportDir used internally
         if (options.outputDir) {
             options.exportDir = options.outputDir;
