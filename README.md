@@ -221,6 +221,27 @@ ONENOTE_EXPORT_LOG_LEVEL=debug onenote-export-nb export …                 # fo
 
 `app.log` rotates to `app.log.1` once it passes 5 MB.
 
+## Re-running an export
+
+Exporting the same notebook again into the same `--output-dir` **overwrites** the
+existing Markdown and assets rather than creating `report.pdf_1`, `report.pdf_2`
+duplicates. The run warns you first:
+
+```
+[WARN] Output folder already exists: /path/to/output/My Notebook
+[WARN]   Existing Markdown and assets in it will be overwritten by this run.
+[WARN]   Files from a previous run that are no longer in the notebook are left in place,
+[WARN]   so this is a merge, not a clean mirror. Remove the folder first for a clean export.
+```
+
+So a re-export is a **merge, not a sync**: anything you deleted from OneNote since the
+last run keeps its old `.md` file. Delete the notebook's output folder before exporting
+if you want a clean result.
+
+Two attachments that resolve to the same filename *within a single run* still get
+distinct files (`report.docx` and `report_1.docx`), so one never silently clobbers the
+other.
+
 ## Exit codes
 
 | Code | Meaning |

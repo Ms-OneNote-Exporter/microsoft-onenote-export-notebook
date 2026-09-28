@@ -160,7 +160,9 @@ module.exports = [
     {
         files: ['test/**/*.js'],
         languageOptions: {
-            globals: { ...nodeGlobals, ...jestGlobals },
+            // Browser globals too: tests legitimately call page.evaluate(), whose
+            // callback is serialised into the page just like the scraper's.
+            globals: { ...nodeGlobals, ...browserGlobals, ...jestGlobals },
         },
         rules: {
             'no-console': 'off',
