@@ -1,0 +1,114 @@
+name: Publish Package
+
+# Publishes to npm when a version tag is pushed, and only then. Tagging is the
+# release: a branch push can never publish, and a tag whose name disagrees with
+# package.json is refused below rather than published under a misleading version.
+#
+# This mirrors ../microsoft-webauth's npm-publish.yml, with three differences
+# that this repository needs and that are marked in place.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# OIDC trusted publishing: npm mints a short-lived credential for this run and
+# checks it against the trusted publisher configured on npmjs.com. There is no
+# long-lived npm token stored in this repository, so there is nothing to leak,
+# rotate or revoke.
+#
+# Publishing to the public registry is irreversible, so two tags pushed in quick
+# succession must not race each other. `cancel-in-progress: false` serialises them
+# rather than abandoning a half-finished publish.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # Required for OIDC trusted publishing
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Node 24, not the 20 this repository's CI tests on. Trusted publishing
+      # requires Node >= 22.14.0 and npm >= 11.5.1, and npm 10 (what Node 20
+      # ships) has no OIDC support at all - the publish would fail with an
+      # authentication error that looks nothing like a version problem.
+      # Provenance is still generated either way, since npm attaches it to every
+      # trusted publish.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false # never use caching in release builds
+
+      # A mis-tagged release would publish the wrong version under a misleading
+      # tag name, and the mistake is only visible after it is on the registry.
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+          echo "Publishing ${PKG_VERSION} from tag ${GITHUB_REF_NAME}"
+        shell: bash
+
+      - run: npm ci
+
+      # The browser-backed tests skip themselves when Chromium is missing, which
+      # is right for a developer machine and wrong for a release: the suite would
+      # go green having tested less, and nothing would say so. Installing the same
+      # browser CI uses keeps the published artefact gated on the same coverage.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - run: npm run build --if-present
+
+      # Lint and test, both of which the CI workflow treats as gates. A tag can be
+      # pushed without CI having run on it, so the gates are repeated here rather
+      # than assumed.
+      - run: npm run lint
+      - run: npm test
+
+      # Once npm publishes, the tarball is immutable and public forever. A
+      # release must not depend on `files` in package.json staying complete, so
+      # the real tarball is inspected rather than the declared file list:
+      # test/publishedFiles.test.js checks the same things, but it derives the
+      # list from package.json and would agree with a mistake in it.
+      - name: Verify the tarball ships no credentials or test material
+        run: |
+          PACK_JSON="$(mktemp)"
+          npm pack --dry-run --json > "$PACK_JSON"
+          node -e "
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('$PACK_JSON', 'utf8'));
+            const files = report[0].files.map(f => f.path);
+            const forbidden = [
+              /^auth.*\.json$/i,        // signed-in session state
+              /^logs\//,                // app.log and the --dodump DOM captures
+              /^dumps\//,
+              /^test\//,
+              /^fixtures\//,
+              /^\.github\//,
+              /\.pem$/i,
+              /\.p12$/i
+            ];
+            const leaked = files.filter(f => forbidden.some(re => re.test(f)));
+            if (leaked.length) {
+              console.error('Refusing to publish, tarball contains:', leaked);
+              process.exit(1);
+            }
+            console.log('Tarball is clean: ' + files.length + ' files');
+            files.forEach(f => console.log('  ' + f));
+          "
+          rm -f "$PACK_JSON"
+        shell: bash
+
+      # --access public: this is a scoped package, and npm defaults scoped
+      # packages to restricted. --provenance is automatic for a trusted publish;
+      # it is stated so the guarantee is visible in this file.
+      - run: npm publish --access public --provenance
