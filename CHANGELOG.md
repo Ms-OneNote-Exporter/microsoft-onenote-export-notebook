@@ -132,11 +132,11 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Added
 
-- 203 tests (`npm test`) covering Markdown conversion, internal-link resolution,
+- 226 tests (`npm test`) covering Markdown conversion, internal-link resolution,
   name sanitisation, retry semantics, the run summary, notebook selection, the
   asset pipeline against a real browser, `entrypoint.sh`'s failure handling, log
-  level gating and log-path resolution, authentication-file validation, fetch-host classification, README accuracy, and the
-  Docker build inputs (`Dockerfile`, `.dockerignore`, `start-container.sh`).
+  level gating and log-path resolution, authentication-file validation, fetch-host classification, README accuracy, the Docker build inputs, and the
+  scrapers against de-identified fixtures captured from the live OneNote UI (`Dockerfile`, `.dockerignore`, `start-container.sh`).
 - ESLint (`npm run lint`) configured for defect detection rather than style, and
   a GitHub Actions workflow running lint, tests and a CLI smoke test.
 - `REVIEW-CODE.md`: the full review, with per-finding evidence, fix status, and
