@@ -1,0 +1,33 @@
+# Keep the build context small and, more importantly, keep secrets and local
+# state out of the image. Anything listed here is invisible to `docker build`.
+
+# Dependencies are installed inside the image from package-lock.json.
+node_modules/
+
+# Local state and outputs - never part of the image.
+output/
+logs/
+diag-dumps/
+dumps/
+
+# Authentication state. This is the important one: an auth.json grants full
+# account access, and .gitignore keeps it out of git, but a `COPY . .` would
+# still sweep it into the image.
+auth.json
+*.auth.json
+
+# VCS and CI
+.git/
+.gitignore
+.github/
+
+# Review artefacts and local agent config
+REVIEW-CODE.md
+.qwen/
+QWEN.md
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+*.log
