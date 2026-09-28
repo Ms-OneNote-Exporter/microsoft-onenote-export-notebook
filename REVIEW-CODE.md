@@ -237,10 +237,17 @@ One hypothesis was **disproved** by running it — see F-19.
   two tables — the tool opens **a different notebook than the user selected, and exports it
   without complaint.** *Verification status:* traced from code, not yet reproduced (needs a
   live DOM). This is precisely what the `dumps/20260927/` **STEP 1** capture is for.
-- F-21 (Medium) — `navigateBack` returns `false` when no back button is found
-  (`scrapers.js:586-604`) and `processSections` ignores the return value
-  (`exporter.js:122`), so a failed "back" leaves the frame inside the group and the
-  traversal silently continues against the wrong tree.
+- F-21 (**was Medium — WRONG, corrected 2026-09-28**) — I originally recorded that
+  `navigateBack`'s `false` return was ignored and that traversal "silently continues
+  against the wrong tree", then "fixed" it by throwing. **A real export run disproved
+  it.** `navigateBack` returns `false` in the *normal* case — 2 of 2 groups hit it — and
+  the export still produced all 15 pages and 16 assets, because sections are selected by
+  absolute `[id="..."]` selector and OneNote keeps the entire section tree in one DOM, so
+  the next sibling is reachable without navigating back. My throw aborted both groups and
+  double-counted the failures (4 reported for 2 groups). Reverted to log-and-continue in
+  `4e8d065`. The observation is not worthless, but only as trivia: the code should stop
+  *pretending* to navigate back when it cannot — find a durable selector or stop calling
+  it — not abort on it.
 
 **`scrapers.js`**
 - F-02 (Medium, **finding corrected during remediation**) — originally recorded as
@@ -390,6 +397,42 @@ One hypothesis was **disproved** by running it — see F-19.
   all Docker files, and does not mention `logs/app.log` (see F-37) or the 0644 dump
   sensitivity.
 
+### Phase 2b — Findings from the first real export run (2026-09-28)
+
+The user ran two real exports against `NoteBook_Attachments`. The second one exposed four
+things no amount of code reading had found, which is the argument for running the tool:
+
+- **F-51 (High, fixed `4e8d065`) — `blob:` image URLs could never be downloaded.**
+  ```
+  [ERROR] Download failed (apiRequestContext.get: Protocol "blob:" not supported.
+          Expected "http:"): blob:https://euc-onenote.officeapps.live.com/c316bae8-…
+  ```
+  Three times per image, then silently dropped. A `blob:` URL is not a network address: it
+  resolves only in the document that created it, and Playwright's `APIRequestContext`
+  speaks http/https only. OneNote uses blob URLs for inline images and printouts, so
+  **every printout-style image was being lost** while the page still reported success.
+  Fixed by reading the blob through the page (`fetch` + `FileReader` → base64 → Buffer) in
+  `readBlobInPage`, with a browser-backed test.
+- **F-52 (Medium, fixed `4e8d065`) — same-named attachments overwrote each other.**
+  `getUniqueAssetPath` probed the filesystem with `existsSync`, so two attachments sharing a
+  name *in the same page* both resolved to the same path (neither file existed when the
+  second was planned) and the second clobbered the first. The log shows the confusing
+  version of this: `…_nosl.docx` reported as failed, then a later duplicate landing on the
+  unsuffixed name. Names are now reserved as they are planned, per section.
+- **F-32 (confirmed in production, still open)** — the retry multiplication is real and
+  visible: `[Strategy: UI Click] Could not find clickable element for file_1` appears three
+  times, ~7–9s apart, per attachment, then a scary `ERROR: All download strategies failed`.
+  The unit tests now show the same cost directly — the two permanent-failure cases each
+  take exactly 3s of pure backoff. Still deliberately **not** "fixed" by tuning
+  `maxAttempts`: the same run shows the retry is load-bearing for the cases that *do*
+  succeed, and changing it blind is precisely the mistake F-21 was.
+- **F-53 (Low, fixed `4e8d065`)** — a non-base64 `data:` URL returned `false` silently (or,
+  in the base64 branch, would have written garbage). It now fails with a stated reason.
+- Also noted, no action yet: the first invocation was interrupted with `^C` during the
+  10s settle wait and the `finally` block closed the browser correctly, so Ctrl-C behaves;
+  and the editor popup legitimately starts at `login.microsoftonline.com` before redirecting
+  to the SharePoint `Doc.aspx` frame, which is expected rather than a mis-parse.
+
 - **Exit criteria met:** every module in §6 has findings or an explicit clean note.
 
 ### Phase 3 — Architecture & duplication (M)
@@ -485,6 +528,9 @@ the Phase 2 section above; this table is the index and the fix ladder.
 
 | ID | Sev | Area | One-line summary | Status |
 |----|-----|------|------------------|--------|
+| F-51 | **High** | `exporter.js:31` | `blob:` image URLs cannot be fetched by the request context ⇒ every inline/printout image silently lost | **fixed** `4e8d065` |
+| F-52 | Medium | `exporter.js:332` | Same-named attachments overwrite each other (filesystem probe instead of reserving planned names) | **fixed** `4e8d065` |
+| F-53 | Low | `exporter.js:22` | Non-base64 `data:` URL failed silently / could write garbage | **fixed** `4e8d065` |
 | F-01 | **Critical** | `exporter.js:539` | Failed export exits 0 — `runExport` swallows every error, disabling all failure detection | **fixed** `4a5e4ce` |
 | F-20 | High | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verifies the name ⇒ wrong notebook can be exported | **fixed** `d878ceb` (dump still wanted to confirm the multi-table layout) |
 | F-24 | High | `parser.js:72` | Video wikilinks hardcode `.mp4` while files are written with the URL's real extension | **fixed** `a306c9d` |
@@ -500,7 +546,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-30 | Medium | `linkResolver.js:81` | Windows `\` separators break Obsidian wikilinks | **fixed** `a306c9d` |
 | F-31 | Low | `linkResolver.js:10` | Resolver returns `void`; unresolved links are invisible | **fixed** `a306c9d` |
 | F-02 | Medium | `scrapers.js:1` | **Corrected:** unused `logger` import ⇒ 4 `console.*` calls bypass `logs/app.log`. Those calls are inside browser-context `evaluate()` callbacks, so the logger is not available there. | partially fixed `a306c9d` |
-| F-21 | Medium | `exporter.js:122` | `navigateBack` failure ignored ⇒ traversal continues against the wrong tree | **fixed** `d878ceb` |
+| F-21 | Low | `exporter.js:122` | ~~`navigateBack` failure ignored ⇒ traversal continues against the wrong tree~~ — **disproved by a real run**; the throw I added broke the export. Reverted `4e8d065`. | reverted |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | **fixed** `d878ceb` |
 | F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | open |
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
@@ -576,9 +622,23 @@ all Low/Info items · `npm test` real tests + CI workflow.
 | `99b6162` | Formatting tidy of the `no-else-return` autofix |
 | `e2debbb` | Register status; **F-02 corrected** |
 | `d878ceb` | **F-20** name verification, **F-21** `navigateBack`, **F-22** empty-group warning, unhandled-rejection guard |
+| `4e8d065` | **Regression from `d878ceb` reverted** (F-21 was wrong), **F-51** blob URLs, **F-52** asset name reservation, **F-53** data: URL validation, CI installs Chromium |
 
-**Fixed: 1 Critical, 5 High, 9 Medium, 13 Low/Info.** Open: F-32, F-33, F-36, F-37, F-40,
-F-44, F-45, F-46, F-47, F-48, F-23, and the Low/Info tail.
+**Fixed: 1 Critical, 6 High, 10 Medium, 14 Low/Info.** Open: F-23, F-32, F-33, F-36, F-37,
+F-40, F-44, F-45, F-46, F-47, F-48 and the Low/Info tail.
+
+### Lesson worth keeping (from F-21)
+
+F-21 was a Medium finding I was confident about, and "fixing" it broke the exporter. The
+claim — "a failed back-navigation leaves the frame in the wrong tree" — was plausible and
+unverified. The same review had already established the rule it violated: *no speculation
+presented as fact*. Coding reading can tell you a return value is ignored; it cannot tell
+you the ignored value is load-bearing. One real run answered that in a minute.
+
+So: findings that assert a *runtime consequence* rather than a *code defect* need
+execution evidence before any behaviour changes. The distinguishing question is "can I
+demonstrate this input, and what happens?" — for F-21 the honest answer was "I don't know
+what happens", and the fix should have been a log line, not a throw.
 
 ### Next session, in priority order
 
