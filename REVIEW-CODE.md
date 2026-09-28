@@ -538,7 +538,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-24 | High | `parser.js:72` | Video wikilinks hardcode `.mp4` while files are written with the URL's real extension | **fixed** `a306c9d` |
 | F-25 | High | `parser.js:113` | Unescaped `|` in table cells silently adds phantom columns | **fixed** `a306c9d` |
 | F-29 | High | `linkResolver.js:19` | Substring id matching with no specificity ordering ⇒ links resolve to the **wrong page** | **fixed** `a306c9d` |
-| F-44 | High | `Dockerfile:8` | Image `git clone`s `main` from GitHub; local code is never in the image | open |
+| F-44 | High | `Dockerfile:8` | Image `git clone`s `main` from GitHub; local code is never in the image | **fixed** (image rebuilt and verified: contains local source, runs as uid 1000, Chromium launches) |
 | F-42 | High | `diagnose-notebook.js:66` | Diagnostic script calls a 4-param function with 3 args ⇒ guaranteed TypeError | **fixed** `c35c3b5` |
 | F-14 | High | `exporter.js:99,152,169` | `sanitize()` returning `''` collapses a section into its parent directory | **fixed** `4a5e4ce` |
 | F-12 | Low | `index.js:9` | `--version` reported 1.0.0 while `package.json` says 0.1.1 | **fixed** `98347e8` |
@@ -557,7 +557,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | open |
 | F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | open |
 | F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally | **closed by decision** — the unconditional message is now intentional (see note) |
-| F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | open |
+| F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | **fixed** — name, image, output dir and auth file all overridable; `--init` + `--shm-size=1g` added |
 | F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | open |
 | F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | open |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | open |

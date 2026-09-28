@@ -42,6 +42,16 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Fixed
 
+- **The Docker image contained the wrong code.** It ran `git clone … /app`, so the
+  image held whatever was on `main` at build time and never the local working tree:
+  a local fix could not be container-tested, and the image silently disagreed with
+  the checkout. It now `COPY`s the source, installs with `npm ci`, pins the base
+  image to a patch release, and drops to an unprivileged `node` user.
+  `start-container.sh` no longer points at a hardcoded sibling checkout, creates
+  the container detached as it always claimed to, and prints a `docker exec` hint
+  naming the container it actually created (it used to name a different one, so the
+  copy-pasted command could not work). It passes `--init` and `--shm-size=1g` for
+  Chromium. A `.dockerignore` keeps `auth.json` and local state out of the image.
 - Internal links could resolve to **the wrong page**: the target was picked by
   first-match substring search over all known ids, so an id that merely appeared
   somewhere in an href could win. Matching is now scored, and ids too short to
@@ -82,9 +92,10 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Added
 
-- 68 tests (`npm test`) covering Markdown conversion, internal-link resolution,
+- 107 tests (`npm test`) covering Markdown conversion, internal-link resolution,
   name sanitisation, retry semantics, the run summary, notebook selection, the
-  asset pipeline against a real browser, and `entrypoint.sh`'s failure handling.
+  asset pipeline against a real browser, `entrypoint.sh`'s failure handling, and
+  the Docker build inputs (`Dockerfile`, `.dockerignore`, `start-container.sh`).
 - ESLint (`npm run lint`) configured for defect detection rather than style, and
   a GitHub Actions workflow running lint, tests and a CLI smoke test.
 - `REVIEW-CODE.md`: the full review, with per-finding evidence, fix status, and
