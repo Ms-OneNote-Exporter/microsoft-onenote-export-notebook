@@ -5,5 +5,14 @@ auth.json
 *.log
 .DS_Store
 diag-dumps/
+# Raw dump captures are never committed (they contain authenticated DOM and PII).
+# Only the hand-written catalogue for each capture session is kept. The dance below
+# is deliberate: ignore the session dirs, re-include them so git descends, ignore
+# their contents, then re-include just INDEX.md. Using `dumps/` outright would stop
+# git descending and make the final negation unreachable.
+dumps/*
+!dumps/*/
+dumps/*/*
+!dumps/*/INDEX.md
 .qwen
 QWEN.md

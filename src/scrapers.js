@@ -1,4 +1,9 @@
-const logger = require('./utils/logger');
+// NOTE: there is deliberately no `require('./utils/logger')` here. The DOM
+// work in this file lives inside callbacks that Playwright serialises and runs
+// in the browser, where a Node module is not in scope - calling the logger from
+// there would throw. The consequence is that scraper diagnostics go to the
+// browser console and never reach logs/app.log; the real fix is to return
+// diagnostic data from evaluate() and log it on the Node side.
 const { withRetry } = require('./utils/retry');
 
 /**
@@ -7,7 +12,7 @@ const { withRetry } = require('./utils/retry');
  * @returns {Promise<Array>} - List of items { id, name, type: 'section'|'group' }.
  */
 async function getSections(frame, parentId = null) {
-    return await frame.evaluate((pid) => {
+    return frame.evaluate((pid) => {
         const results = [];
 
         // Find the "root" of the search level
@@ -31,7 +36,7 @@ async function getSections(frame, parentId = null) {
                             break;
                         }
                         // Or try next sibling directly
-                        let next = current.nextElementSibling;
+                        const next = current.nextElementSibling;
                         if (next && next.getAttribute('role') === 'group') {
                             groupContents = next;
                             break;
@@ -188,7 +193,7 @@ async function selectSection(frame, sectionId) {
  * @returns {Promise<object>} - { title, contentHtml }.
  */
 async function getPageContent(frame) {
-    return await frame.evaluate(() => {
+    return frame.evaluate(() => {
         // Find the main canvas/content area
         const canvas = document.querySelector('#OreoCanvas') ||
             document.querySelector('.canvasContainer') ||
@@ -276,7 +281,7 @@ async function getPageContent(frame) {
         // 1. Extract YouTube/Vimeo/Embeds
         const allIframes = Array.from(contentDiv.querySelectorAll('iframe'));
         allIframes.forEach(iframe => {
-            let src = iframe.getAttribute('src') || '';
+            const src = iframe.getAttribute('src') || '';
             if (src.includes('youtube.com') || src.includes('youtu.be') || src.includes('vimeo.com')) {
                 const embedId = `embed_${embedInfos.length}`;
                 embedInfos.push({ id: embedId, src, type: 'video' });
@@ -351,7 +356,7 @@ async function getPageContent(frame) {
 
         const processedFileSignatures = new Set();
 
-        allPotentialLinks.forEach((link, idx) => {
+        allPotentialLinks.forEach((link) => {
             const href = link.getAttribute('href') || '';
             const text = link.innerText.trim();
             const title = link.getAttribute('title') || '';
@@ -376,8 +381,16 @@ async function getPageContent(frame) {
                 else if (fileExtRegex.test(ariaLabel)) originalName = ariaLabel;
                 else if (fileExtRegex.test(text.split('\n')[0].trim())) originalName = text.split('\n')[0].trim();
 
-                // Detailed logging for debugging
-                console.debug(`[Scraper] Analyzing ${link.tagName} (ID: ${attachId}):\n      - title: "${title}"\n      - aria-label: "${ariaLabel}"\n      - text: "${text.substring(0, 30)}..."\n      - href: "${href.substring(0, 50)}..."`);
+                // NOTE: this callback is serialised by Playwright and executed
+                // inside the page, so the Node logger does NOT exist here and
+                // console is the only thing available. See the eslint-disable
+                // at the top of getPageContent.
+                // eslint-disable-next-line no-console
+                console.debug(
+                    `[Scraper] attachment ${attachId} <${link.tagName}> ` +
+                    `title="${title}" aria-label="${ariaLabel}" ` +
+                    `text="${text.substring(0, 30)}" href="${href.substring(0, 50)}"`
+                );
 
                 if (!originalName || originalName === 'attached_file' || !fileExtRegex.test(originalName)) {
                     if (href) {
@@ -394,19 +407,20 @@ async function getPageContent(frame) {
                                     originalName = lastPart;
                                 } else {
                                     // Look for the extension earlier in the URL (SharePoint style)
-                                    const match = href.match(/([^\/]+\.(docx?|xlsx?|pptx?|pdf|txt|md|csv|zip|rar|7z|json|xml|log|png|jpe?g|gif|svg))(?:\?|&|$)/i);
+                                    const match = href.match(/([^/]+\.(docx?|xlsx?|pptx?|pdf|txt|md|csv|zip|rar|7z|json|xml|log|png|jpe?g|gif|svg))(?:\?|&|$)/i);
                                     if (match) originalName = match[1];
                                 }
                             }
                         } catch (e) {
                             // Fallback regex
-                            const match = href.match(/([^\/]+\.[a-zA-Z0-9]+)(?:\?|&|$)/);
+                            const match = href.match(/([^/]+\.[a-zA-Z0-9]+)(?:\?|&|$)/);
                             if (match) originalName = match[1];
                         }
                     }
                 }
                 if (!originalName) originalName = 'attached_file';
 
+                // eslint-disable-next-line no-console
                 console.debug(`[Scraper] Detected attachment: ${originalName} (ID: ${attachId}, Type: ${link.tagName})`);
                 attachmentInfos.push({ id: attachId, src: href, originalName: originalName, isCloud: isCloud });
                 link.setAttribute('data-local-file', attachId);
@@ -440,9 +454,11 @@ async function getPageContent(frame) {
                 }
 
                 if (realLink) {
+                    // eslint-disable-next-line no-console
                     console.debug(`[Scraper] Successfully matched real element for ${attachId}`);
                     realLink.setAttribute('data-one-attach-id', attachId);
                 } else {
+                    // eslint-disable-next-line no-console
                     console.warn(`[Scraper] FAILED to match real element for ${attachId}. UI Click strategy will fail.`);
                 }
                 return;
@@ -475,6 +491,9 @@ async function getPageContent(frame) {
                 let src = origImg.getAttribute('src');
                 if (src) {
                     if (!src.startsWith('data:')) {
+                        // If the URL cannot be resolved we keep the original src
+                        // and let the download attempt report the real problem.
+                        // eslint-disable-next-line no-empty
                         try { src = new URL(src, window.location.href).href; } catch (e) { }
                     }
 
@@ -521,7 +540,7 @@ async function getPageContent(frame) {
                             matchingClone.setAttribute('data-local-src', id);
                             if (isPrintout) matchingClone.setAttribute('data-is-printout', 'true');
 
-                            let alt = matchingClone.getAttribute('alt') || '';
+                            const alt = matchingClone.getAttribute('alt') || '';
                             if (alt.includes('\n') || alt.includes('ACCESSIBILITY') || alt.length > 300) {
                                 const firstLine = alt.split('\n')[0].trim();
                                 matchingClone.setAttribute('alt', (firstLine.length < 100 && !firstLine.includes('ACCESSIBILITY')) ? firstLine : '');
@@ -609,7 +628,7 @@ async function navigateBack(frame) {
  * @returns {Promise<boolean>}
  */
 async function isSectionLocked(frame) {
-    return await frame.evaluate(() => {
+    return frame.evaluate(() => {
         const texts = [
             "Section Password Protected",
             "This section is password protected"
@@ -618,7 +637,7 @@ async function isSectionLocked(frame) {
         // Find elements that contain the text
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
         let node;
-        while (node = walker.nextNode()) {
+        while ((node = walker.nextNode())) {
             const content = node.textContent;
             if (texts.some(t => content.includes(t))) {
                 const parent = node.parentElement;

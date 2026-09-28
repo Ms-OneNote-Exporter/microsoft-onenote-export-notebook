@@ -1,6 +1,36 @@
 const logger = require('./logger');
 
 /**
+ * Marks an error as permanent so withRetry will not retry it.
+ *
+ * A retry is only worth its wall-clock cost when re-running the operation could
+ * plausibly produce a different result. Errors describing a permanent condition
+ * - a malformed URL, a DOM element nothing will recreate, an unsupported
+ * protocol - would burn the entire backoff schedule to reach the same outcome.
+ * Observed cost before this existed: three identical "Could not find clickable
+ * element" warnings ~8s apart for every failing attachment, and unit tests
+ * taking exactly 3s (1s + 2s of backoff) to fail on a bad URL.
+ *
+ * @param {Error} error - The error to mark
+ * @param {string} reason - Optional human-readable reason for the log
+ * @returns {Error} The same error, marked
+ */
+function permanent(error, reason) {
+    error.permanent = true;
+    if (reason) error.permanentReason = reason;
+    return error;
+}
+
+/**
+ * True when an error should stop the retry loop immediately.
+ * @param {Error} error - Error thrown by the retried function
+ * @returns {boolean}
+ */
+function isPermanent(error) {
+    return Boolean(error && error.permanent);
+}
+
+/**
  * Retry a function with exponential backoff
  * @param {Function} fn - Async function to retry
  * @param {Object} options - Retry options
@@ -11,7 +41,7 @@ const logger = require('./logger');
  * @param {string} options.operationName - Name of operation for logging (default: 'Operation')
  * @param {boolean} options.silent - Suppress retry logging (default: false)
  * @returns {Promise<any>} Result of the function
- * @throws {Error} If all attempts fail
+ * @throws {Error} If all attempts fail, or immediately if the error is permanent
  */
 async function withRetry(fn, options = {}) {
     const {
@@ -31,6 +61,18 @@ async function withRetry(fn, options = {}) {
             return await fn();
         } catch (error) {
             lastError = error;
+
+            // Nothing about the situation will change on a second attempt, so
+            // stop now instead of paying the backoff to reach the same outcome.
+            if (isPermanent(error)) {
+                if (!silent) {
+                    logger.debug(
+                        `${operationName} failed permanently ` +
+                        `(${error.permanentReason || 'no reason given'}), not retrying.`
+                    );
+                }
+                throw error;
+            }
 
             if (attempt === maxAttempts) {
                 if (!silent) {
@@ -56,4 +98,4 @@ async function withRetry(fn, options = {}) {
     throw lastError;
 }
 
-module.exports = { withRetry };
+module.exports = { withRetry, permanent, isPermanent };

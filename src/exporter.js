@@ -4,13 +4,49 @@ const { listNotebooks, openNotebook, openNotebookByLink } = require('./navigator
 const { getSections, getPages, selectSection, selectPage, getPageContent, navigateBack, isSectionLocked } = require('./scrapers');
 const { createMarkdownConverter } = require('./parser');
 const { resolveInternalLinks } = require('./linkResolver');
-const { withRetry } = require('./utils/retry');
+const { withRetry, permanent } = require('./utils/retry');
 const readline = require('readline');
 const fs = require('fs-extra');
 const path = require('path');
-const sanitize = require('sanitize-filename');
 
 const { downloadAttachment } = require('./downloadStrategies');
+const { safeName, uniqueName } = require('./utils/naming');
+
+// Reads a blob: URL from inside the page and returns it as base64.
+//
+// A blob: URL is not a network address: it only resolves in the document that
+// created it, so Playwright's APIRequestContext (which only speaks http/https)
+// rejects it with `Protocol "blob:" not supported`. OneNote uses blob: URLs for
+// images it renders inline - printouts especially - so they have to be read
+// through the page itself: fetch, then FileReader to get bytes out.
+//
+// @param {import('playwright').Page} page - Page that owns the blob
+// @param {string} url - The blob: URL
+// @returns {Promise<Buffer>} The blob's bytes
+async function readBlobInPage(page, url) {
+    const dataUrl = await page.evaluate(async (blobUrl) => {
+        const response = await fetch(blobUrl);
+        if (!response.ok) throw new Error(`blob fetch failed: ${response.status}`);
+
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('FileReader failed'));
+            reader.readAsDataURL(blob);
+        });
+    }, url);
+
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+        throw new Error('Page did not return a data URL for the blob');
+    }
+
+    const commaAt = dataUrl.indexOf(',');
+    if (commaAt === -1) {
+        throw new Error('Malformed data URL returned for the blob');
+    }
+    return Buffer.from(dataUrl.slice(commaAt + 1), 'base64');
+}
 
 // Download a resource (image, video) via HTTP request with retry logic
 // options.timeout  - HTTP request timeout in ms (default 60 000)
@@ -19,22 +55,44 @@ async function downloadResource(page, url, outputPath, options = {}) {
     const { timeout = 60000, onError } = options;
     return withRetry(async () => {
         if (url.startsWith('data:')) {
-            const matches = url.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+            const matches = url.match(/^data:([A-Za-z+/-]+);base64,(.+)$/);
             if (matches && matches.length === 3) {
                 const buffer = Buffer.from(matches[2], 'base64');
                 await fs.writeFile(outputPath, buffer);
                 return true;
             }
-            return false;
+            // Not a base64 data URL. Decoding it as base64 would silently write
+            // garbage, so fail loudly instead of producing a corrupt asset.
+            // Retrying cannot change a malformed URL, so mark it permanent.
+            throw permanent(
+                new Error(`Unsupported data: URL (not base64): ${url.substring(0, 60)}…`),
+                'malformed data: URL'
+            );
+        }
+
+        // The request context speaks http/https only. blob: is handled below;
+        // every other scheme (about:, ftp:, mailto:, a bare relative path) fails
+        // identically on each attempt and used to burn the whole backoff.
+        if (!/^https?:/i.test(url) && !url.startsWith('blob:')) {
+            const protocol = (url.match(/^([a-z][a-z0-9+.-]*):/i) || [, 'none'])[1];
+            throw permanent(
+                new Error(`Unsupported URL protocol "${protocol}:": ${url.substring(0, 60)}…`),
+                `unsupported protocol ${protocol}:`
+            );
+        }
+
+        if (url.startsWith('blob:')) {
+            await fs.writeFile(outputPath, await readBlobInPage(page, url));
+            return true;
         }
 
         const response = await page.context().request.get(url, { timeout });
         if (response.ok()) {
             await fs.writeFile(outputPath, await response.body());
             return true;
-        } else {
-            throw new Error(`Failed to download resource (HTTP ${response.status()}): ${url.substring(0, 100)}...`);
         }
+        throw new Error(`Failed to download resource (HTTP ${response.status()}): ${url.substring(0, 100)}...`);
+
     }, {
         maxAttempts: 3,
         initialDelayMs: 1000,
@@ -84,19 +142,45 @@ function waitForEnter(message) {
     });
 }
 
-async function processSections(contentFrame, outputDir, td, options, pageIdMap, processedItems = new Set(), parentId = null, stats = { totalPages: 0, totalAssets: 0 }) {
+/**
+ * Statistics for one export run.
+ *
+ * The `failed*` counters exist because every per-item error is caught and the
+ * run continues: without them a partially-failed export is indistinguishable
+ * from a clean one.
+ *
+ * @returns {{totalPages: number, totalAssets: number, failedPages: number, failedSections: number, failedGroups: number}}
+ */
+function newStats() {
+    return { totalPages: 0, totalAssets: 0, failedPages: 0, failedSections: 0, failedGroups: 0 };
+}
+
+async function processSections(contentFrame, outputDir, td, options, pageIdMap, processedItems = new Set(), parentId = null, stats = newStats()) {
     const sections = await getSections(contentFrame, parentId);
     if (sections.length === 0 && parentId) {
-        logger.debug('(No items found in this group)');
+        // Inside a group, an empty result usually means the group container could
+        // not be located, not that the group is empty. At debug level this made a
+        // whole subtree disappear from the export without a word.
+        logger.warn(
+            `No items found inside group ${parentId}. If this group is not really empty, ` +
+            'its sections were skipped - re-run with --dodump and check logs/dumps.'
+        );
+    } else if (sections.length === 0) {
+        logger.warn('No sections or groups found at the top level. The notebook may be empty, or the OneNote DOM may have changed.');
     } else {
         logger.info(`Found ${sections.length} items at current level.`);
     }
+
+    // Directory names already claimed at THIS level. Two sections can sanitise
+    // to the same string ('A/B' and 'A:B' both become 'AB'), and without this
+    // they would share one directory and interleave their pages and assets.
+    const usedDirNames = new Set();
 
     for (const item of sections) {
         if (processedItems.has(item.id)) continue;
 
         if (item.type === 'group') {
-            const groupName = sanitize(item.name);
+            const groupName = uniqueName(safeName(item.name, 'Untitled group'), usedDirNames);
             const groupDir = path.join(outputDir, groupName);
             await fs.ensureDir(groupDir);
 
@@ -113,16 +197,32 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
                 if (options.dodump) {
                     const dumpDir = await logger.getDumpDir();
-                    const displayPath = logger.getDumpDisplayPath();
-                    const dumpPath = path.join(dumpDir, `debug_group_${sanitize(item.name)}.html`);
+                    const dumpPath = path.join(dumpDir, `debug_group_${safeName(item.name, 'group')}.html`);
                     await fs.writeFile(dumpPath, await contentFrame.content());
                 }
                 await processSections(contentFrame, groupDir, td, options, pageIdMap, processedItems, item.id, stats);
                 logger.info(`Returning from group: ${item.name}`);
-                await navigateBack(contentFrame);
+
+                // navigateBack() frequently finds no control and returns false -
+                // that is the NORMAL case, not a failure. Selection is done by
+                // absolute [id="..."] selector, and OneNote keeps the whole section
+                // tree in one DOM, so the next sibling is still reachable without
+                // navigating back. An earlier version of this code threw here and
+                // aborted every group on that basis, losing whole subtrees; a real
+                // run (2026-09-28) showed 2 of 2 groups hitting it while still
+                // exporting all 15 pages. So: note it and carry on.
+                const wentBack = await navigateBack(contentFrame);
+                if (!wentBack) {
+                    logger.debug(
+                        `No "Back" control found after "${item.name}"; continuing ` +
+                        '(sections are selected by id, so this is harmless)'
+                    );
+                }
+
                 logger.info('Will wait 3 seconds to let the frame load properly');
                 await contentFrame.waitForTimeout(3000);
             } catch (e) {
+                stats.failedGroups++;
                 logger.error(`Failed to process group ${item.name}:`, e);
             }
             continue;
@@ -132,6 +232,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         try {
             await selectSection(contentFrame, item.id);
         } catch (e) {
+            stats.failedSections++;
             logger.error(`Failed to select section ${item.name}:`, e);
             continue;
         }
@@ -149,7 +250,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
             isLocked = await isSectionLocked(contentFrame);
         }
 
-        const baseSectionName = sanitize(item.name);
+        const baseSectionName = safeName(item.name, 'Untitled section');
 
         const isHeadless = !options.notheadless;
         if (isLocked && (options.nopassasked || isHeadless)) {
@@ -166,7 +267,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
             continue;
         }
 
-        const sectionDir = path.join(outputDir, baseSectionName);
+        const sectionDir = path.join(outputDir, uniqueName(baseSectionName, usedDirNames));
         await fs.ensureDir(sectionDir);
 
         // Map the Section ID to its directory for internal links
@@ -200,6 +301,29 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         // Track used filenames in this section to handle collisions
         const usedNames = new Set();
 
+        // This section's assets/ directory. Every page in the section shares it,
+        // so name reservations have to be shared too.
+        const assetDir = path.join(sectionDir, 'assets');
+
+        // Asset file names already claimed in this section's assets/ directory.
+        // Reserving names as they are PLANNED matters: the old code probed the
+        // filesystem with existsSync, so two attachments with the same name in one
+        // page both got the same path (neither file existed yet) and the second
+        // silently overwrote the first.
+        const usedAssetNames = new Set();
+
+        /** Picks a free asset path, counting around names already taken. */
+        const getUniqueAssetPath = (base, ext) => {
+            const name = safeName(base, 'file');
+            let candidate = `${name}.${ext}`;
+            let counter = 1;
+            while (usedAssetNames.has(candidate) || fs.existsSync(path.join(assetDir, candidate))) {
+                candidate = `${name}_${counter++}.${ext}`;
+            }
+            usedAssetNames.add(candidate);
+            return path.join(assetDir, candidate);
+        };
+
         for (const pageInfo of pages) {
             // Deduplicate pages too
             if (processedItems.has(pageInfo.id)) continue;
@@ -214,15 +338,14 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
                 if (options.dodump) {
                     const dumpDir = await logger.getDumpDir();
-                    const displayPath = logger.getDumpDisplayPath();
-                    const pageDumpPath = path.join(dumpDir, `debug_page_${sanitize(pageInfo.name)}.html`);
+                    const pageDumpPath = path.join(dumpDir, `debug_page_${safeName(pageInfo.name, 'page')}.html`);
                     await fs.writeFile(pageDumpPath, await contentFrame.content());
                 }
 
                 const content = await getPageContent(contentFrame);
 
                 // Determine unique filename
-                let baseName = sanitize(pageInfo.name || 'Untitled');
+                const baseName = safeName(pageInfo.name, 'Untitled');
                 let sanitizedNoteName = baseName;
                 let collisionCount = 1;
                 while (usedNames.has(sanitizedNoteName)) {
@@ -238,21 +361,9 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
                 // Rename and Download Resources
                 let savedResources = 0;
-                const assetDir = path.join(sectionDir, 'assets');
 
                 if (totalAssets > 0) {
                     await fs.ensureDir(assetDir);
-
-                    // Helper to get unique filename in assets dir
-                    const getUniqueAssetPath = (base, ext) => {
-                        let name = sanitize(base);
-                        let fullPath = path.join(assetDir, `${name}.${ext}`);
-                        let counter = 1;
-                        while (fs.existsSync(fullPath)) {
-                            fullPath = path.join(assetDir, `${name}_${counter++}.${ext}`);
-                        }
-                        return fullPath;
-                    };
 
                     // 1. Process Images (including Printouts)
                     for (const imgInfo of content.images || []) {
@@ -270,9 +381,9 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
                     // 2. Process Attachments
                     for (const attachInfo of content.attachments || []) {
-                        let originalName = attachInfo.originalName || 'file';
-                        let baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-                        let ext = originalName.includes('.') ? originalName.split('.').pop() : 'bin';
+                        const originalName = attachInfo.originalName || 'file';
+                        const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
+                        const ext = originalName.includes('.') ? originalName.split('.').pop() : 'bin';
 
                         const filePath = getUniqueAssetPath(baseName, ext);
                         const finalFileName = path.basename(filePath);
@@ -307,9 +418,17 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                         }
 
                         const finalBaseName = `${sanitizedNoteName}_video_${assetCounter++}`;
-                        const filePath = path.join(assetDir, `${finalBaseName}.${ext}`);
+                        const finalFileName = `${finalBaseName}.${ext}`;
+                        const filePath = path.join(assetDir, finalFileName);
 
-                        updatedHtml = updatedHtml.replace(new RegExp(`data-local-video="${videoInfo.id}"`, 'g'), `data-local-video="${finalBaseName}"`);
+                        // Stamp the FINAL file name, extension included: the
+                        // Markdown rule links to this attribute verbatim, so
+                        // leaving the extension off produced a dead link for
+                        // every video that was not an .mp4.
+                        updatedHtml = updatedHtml.replace(
+                            new RegExp(`data-local-video="${videoInfo.id}"`, 'g'),
+                            `data-local-video="${finalFileName}"`
+                        );
 
                         const success = await downloadResource(contentFrame.page(), videoInfo.src, filePath);
                         if (success) {
@@ -338,10 +457,44 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 logger.success(`Saved (${savedResources} assets)`);
 
             } catch (e) {
+                stats.failedPages++;
                 logger.error(`Failed to export ${pageInfo.name}:`, e);
             }
         }
     }
+}
+
+/**
+ * Prints the end-of-run summary.
+ *
+ * A run in which items failed must not be announced with a bare "Export
+ * complete!": every per-item error is caught so the export can continue, which
+ * means a partial result used to look exactly like a clean one - and the
+ * process exited 0 either way.
+ *
+ * @param {object} stats - Page/asset/failure counters
+ * @param {{resolved: number, unresolved: number}} linkStats - Link resolution counts
+ * @param {string} outputBase - Directory the notebook was written to
+ */
+function reportSummary(stats, linkStats, outputBase) {
+    const failures = stats.failedPages + stats.failedSections + stats.failedGroups;
+
+    if (failures === 0) {
+        logger.success('Export complete!');
+    } else {
+        logger.warn(`Export finished with errors - ${failures} item(s) could not be exported.`);
+        if (stats.failedGroups) logger.warn(`  Groups   failed: ${stats.failedGroups}`);
+        if (stats.failedSections) logger.warn(`  Sections failed: ${stats.failedSections}`);
+        if (stats.failedPages) logger.warn(`  Pages    failed: ${stats.failedPages}`);
+        logger.warn('  See the errors above and logs/app.log for details.');
+    }
+
+    logger.info(`Total Pages: ${stats.totalPages}`);
+    logger.info(`Total Assets: ${stats.totalAssets}`);
+    if (linkStats) {
+        logger.info(`Internal links: ${linkStats.resolved} resolved, ${linkStats.unresolved} unresolved`);
+    }
+    logger.info(`Files saved in: ${outputBase}`);
 }
 
 /**
@@ -355,6 +508,10 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
  * @param {boolean} [options.notheadless] - Visible browser
  * @param {boolean} [options.dodump] - HTML debug dumps
  * @param {boolean} [options.nopassasked] - Skip password-protected sections
+ * @returns {Promise<{totalPages: number, totalAssets: number}>} Export statistics
+ * @throws {Error} If the export fails for any reason. The error is deliberately
+ *   NOT swallowed: callers (and therefore the process exit code) must be able to
+ *   tell a failed export from an empty one.
  */
 async function runExport(options = {}) {
     let session;
@@ -388,7 +545,13 @@ async function runExport(options = {}) {
                         }
                         break;
                     }
-                } catch (e) { }
+                } catch (e) {
+                    // A frame can be cross-origin or already detached, in which
+                    // case probing it throws. That is expected while walking the
+                    // frame list, so keep going - but say so, because a frame we
+                    // could not inspect is a frame we might have missed.
+                    logger.debug(`Skipped an unreadable frame (${frames.length} total): ${e.message}`);
+                }
             }
 
             if (!contentFrame) {
@@ -397,7 +560,7 @@ async function runExport(options = {}) {
             }
 
             const baseDir = options.exportDir || path.resolve(__dirname, '../output');
-            const outputBase = path.resolve(baseDir, sanitize(notebookName));
+            const outputBase = path.resolve(baseDir, safeName(notebookName, 'Notebook'));
             await fs.ensureDir(outputBase);
             const td = createMarkdownConverter();
 
@@ -409,17 +572,14 @@ async function runExport(options = {}) {
             }
 
             const pageIdMap = {};
-            const stats = { totalPages: 0, totalAssets: 0 };
+            const stats = newStats();
             await processSections(contentFrame, outputBase, td, options, pageIdMap, new Set(), null, stats);
 
             logger.info('Resolving internal links...');
-            await resolveInternalLinks(pageIdMap, outputBase);
+            const linkStats = await resolveInternalLinks(pageIdMap, outputBase);
 
-            logger.success('Export complete!');
-            logger.info(`Total Pages: ${stats.totalPages}`);
-            logger.info(`Total Assets: ${stats.totalAssets}`);
-            logger.info(`Files saved in: ${outputBase}`);
-            return;
+            reportSummary(stats, linkStats, outputBase);
+            return stats;
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -429,8 +589,18 @@ async function runExport(options = {}) {
         const { notebooks } = session;
 
         if (notebooks.length === 0) {
-            logger.warn('No notebook have been found.');
+            logger.warn('No notebooks have been found.');
             logger.warn('Remember: you can export a notebook by using the --notebook-link <url> option.');
+
+            // A caller that named a notebook asked for a specific export. Finding
+            // nothing is a failure for them, not a clean no-op, so it must not
+            // exit 0 and look like a successful run.
+            if (options.notebook) {
+                throw new Error(
+                    `Notebook "${options.notebook}" was not found: the notebook list came back empty. ` +
+                    'Check the name, or use --notebook-link <url>.'
+                );
+            }
             return;
         }
 
@@ -471,7 +641,9 @@ async function runExport(options = {}) {
                 session.page,    // listing page
                 session.context, // browser context (to capture the popup)
                 session.browser, // browser
-                selectedNotebook.id
+                selectedNotebook.id,
+                selectedNotebook.name // verified before clicking, so a re-sorted
+                                      // list cannot open the wrong notebook
             );
 
             const editorPage = editorSession.page;
@@ -510,7 +682,7 @@ async function runExport(options = {}) {
             }
 
             const baseDir = options.exportDir || path.resolve(__dirname, '../output');
-            const outputBase = path.resolve(baseDir, sanitize(selectedNotebook.name));
+            const outputBase = path.resolve(baseDir, safeName(selectedNotebook.name, 'Notebook'));
             await fs.ensureDir(outputBase);
             const td = createMarkdownConverter();
 
@@ -524,20 +696,20 @@ async function runExport(options = {}) {
 
             // Start recursive processing
             const pageIdMap = {};
-            const stats = { totalPages: 0, totalAssets: 0 };
+            const stats = newStats();
             await processSections(contentFrame, outputBase, td, options, pageIdMap, new Set(), null, stats);
 
             logger.info('Resolving internal links...');
-            await resolveInternalLinks(pageIdMap, outputBase);
+            const linkStats = await resolveInternalLinks(pageIdMap, outputBase);
 
-            logger.success('Export complete!');
-            logger.info(`Total Pages: ${stats.totalPages}`);
-            logger.info(`Total Assets: ${stats.totalAssets}`);
-            logger.info(`Files saved in: ${outputBase}`);
+            reportSummary(stats, linkStats, outputBase);
+            return stats;
         }
 
-    } catch (e) {
-        logger.error('Export failed:', e);
+        // Only reachable when the notebook picker produced no selection, which
+        // cannot happen: the picker either yields a notebook or throws.
+        throw new Error('Export finished without selecting a notebook.');
+
     } finally {
         if (session && session.browser) {
             logger.debug('Closing browser...');
@@ -546,4 +718,12 @@ async function runExport(options = {}) {
     }
 }
 
-module.exports = { runExport, hasTty };
+module.exports = {
+    runExport,
+    hasTty,
+    reportSummary,
+    newStats,
+    // Exported for tests only: the asset pipeline (data:, blob:, http) is the
+    // part most likely to regress and it cannot be reached from outside.
+    downloadResourceForTest: downloadResource,
+};

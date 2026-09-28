@@ -53,9 +53,9 @@ async function dismissMcasInterstitial(page) {
                 logger.warn('MCAS post-dismiss network idle timeout — continuing anyway...');
             }
             return true;
-        } else {
-            logger.warn('MCAS: could not find "Continue in current browser" submit button.');
         }
+
+        logger.warn('MCAS: could not find "Continue in current browser" submit button.');
     } catch (e) {
         logger.warn(`MCAS interstitial dismissal failed: ${e.message}`);
     }
@@ -208,9 +208,10 @@ async function listNotebooks(options = {}) {
  * @param {import('playwright').BrowserContext} context
  * @param {import('playwright').Browser} browser
  * @param {string} notebookId - "notebook-row-N"
+ * @param {string} [expectedName] - Notebook name to verify before clicking
  * @returns {Promise<{ browser, page, context }>}
  */
-async function openNotebook(listingPage, context, browser, notebookId) {
+async function openNotebook(listingPage, context, browser, notebookId, expectedName) {
     logger.info('Opening notebook...');
 
     const match = notebookId.match(/notebook-row-(\d+)/);
@@ -222,26 +223,53 @@ async function openNotebook(listingPage, context, browser, notebookId) {
     // Subscribe to new-page events BEFORE the click
     const newPagePromise = context.waitForEvent('page', { timeout: 60000 });
 
-    logger.debug(`Clicking notebook row ${rowIndex}...`);
-    const clicked = await listingPage.evaluate(({ idx, imgSel }) => {
+    // The click below can throw (that is the point of the name check). If it
+    // does, nothing ever awaits newPagePromise and Playwright's 60s timeout
+    // would resurface as an unhandled rejection in the user's log. Mark it
+    // handled now; awaiting it later still observes the rejection.
+    newPagePromise.catch(() => {});
+
+    logger.debug(`Clicking notebook row ${rowIndex}${expectedName ? ` (expecting "${expectedName}")` : ''}...`);
+
+    // rowIndex is only meaningful relative to the table the row was found in, and
+    // the notebooks page shows the same notebook in more than one table (Recent
+    // and All). If the list re-rendered or re-sorted between listing and clicking,
+    // the same index can address a different row - which used to mean silently
+    // opening, and exporting, the WRONG notebook. So match on the name and refuse
+    // to click unless the row really is the one that was selected.
+    const outcome = await listingPage.evaluate(({ idx, imgSel, wantName }) => {
+        const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
         const imgs = Array.from(document.querySelectorAll(imgSel));
+
         for (const img of imgs) {
             const tr = img.closest('tr');
-            if (tr && tr.rowIndex === idx) {
-                const nameSpan = img.nextElementSibling;
-                if (nameSpan) { nameSpan.click(); return true; }
-                tr.click();
-                return true;
-            }
-        }
-        return false;
-    }, { idx: rowIndex, imgSel: 'tr img[alt="Classic Notebook"]' });
+            if (!tr || tr.rowIndex !== idx) continue;
 
-    if (!clicked) {
-        throw new Error(`Could not find and click notebook row ${notebookId}`);
+            const nameSpan = img.nextElementSibling;
+            const rowName = nameSpan ? nameSpan.innerText.trim() : '';
+
+            if (wantName && norm(rowName) !== norm(wantName)) {
+                return { clicked: false, reason: `row ${idx} is "${rowName}", expected "${wantName}"` };
+            }
+
+            if (nameSpan) { nameSpan.click(); } else { tr.click(); }
+            return { clicked: true, rowName };
+        }
+
+        return { clicked: false, reason: `no row with index ${idx}` };
+    }, { idx: rowIndex, imgSel: 'tr img[alt="Classic Notebook"]', wantName: expectedName || null });
+
+    if (!outcome.clicked) {
+        // Do NOT fall back to clicking blindly: opening the wrong notebook is
+        // worse than failing, and the user can retry with --notebook-link.
+        throw new Error(
+            `Refusing to click notebook row ${notebookId}: ${outcome.reason}. ` +
+            'The notebook list may have changed since it was listed; re-run, or use ' +
+            '--notebook-link <url> to open it directly.'
+        );
     }
 
-    logger.success('Notebook row clicked! Waiting for editor tab to open...');
+    logger.success(`Notebook row clicked (${outcome.rowName || 'name unknown'})! Waiting for editor tab to open...`);
 
     // Wait for the new page (OneNote editor on SharePoint) to appear
     let editorPage;
