@@ -78,6 +78,17 @@ misleading exit status, and adds the tooling to stop them coming back.
   discarded the editor page it had just opened.
 - A `data:` URL that is not base64 failed silently, or could write garbage. It
   now fails with a stated reason.
+- **The authentication file is validated before the browser starts.** Only its
+  existence was checked, so a truncated file, a saved HTML login page, or a
+  structurally invalid state reached `browser.newContext()` and surfaced as an
+  opaque Playwright error — and the already-launched browser was never closed,
+  leaking a Chromium process per attempt. A bad auth file is now rejected up front
+  with an actionable message ("it starts with `<`, so it looks like a saved web
+  page", "contains no cookies, so the login probably expired"), and a browser whose
+  context fails to open is closed.
+- **A world-readable auth file now produces a warning.** One granting full account
+  access should be `chmod 600`; the tool will tell you when it is not, but still
+  runs.
 - An empty notebook list is an error when `--notebook` named a specific
   notebook, instead of a clean no-op.
 - A sub-tree that failed to load no longer disappears without a warning, and a
@@ -112,11 +123,11 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Added
 
-- 124 tests (`npm test`) covering Markdown conversion, internal-link resolution,
+- 142 tests (`npm test`) covering Markdown conversion, internal-link resolution,
   name sanitisation, retry semantics, the run summary, notebook selection, the
   asset pipeline against a real browser, `entrypoint.sh`'s failure handling, log
-  level gating and log-path resolution, and the Docker build inputs
-  (`Dockerfile`, `.dockerignore`, `start-container.sh`).
+  level gating and log-path resolution, authentication-file validation, and the
+  Docker build inputs (`Dockerfile`, `.dockerignore`, `start-container.sh`).
 - ESLint (`npm run lint`) configured for defect detection rather than style, and
   a GitHub Actions workflow running lint, tests and a CLI smoke test.
 - `REVIEW-CODE.md`: the full review, with per-finding evidence, fix status, and

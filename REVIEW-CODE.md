@@ -555,7 +555,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | **fixed** — `--verbose`/`--quiet` + `ONENOTE_EXPORT_LOG_LEVEL`, default hides debug; rotates at 5 MB |
 | F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | **fixed** — XDG state dir for global installs, `ONENOTE_EXPORT_LOG_DIR` override |
-| F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | open |
+| F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | **fixed** — validated pre-launch, browser closed on context failure, loose-permission warning |
 | F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally | **closed by decision** — the unconditional message is now intentional (see note) |
 | F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | **fixed** — name, image, output dir and auth file all overridable; `--init` + `--shm-size=1g` added |
 | F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | open |
