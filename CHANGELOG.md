@@ -16,9 +16,15 @@ misleading exit status, and adds the tooling to stop them coming back.
   and only log it, so `index.js` never reached `process.exit(1)` and the process
   exited `0` even when nothing was exported. Exit codes are now: `0` success,
   `1` export failure, `2` usage error (`--non-interactive` without a notebook).
-  **This affects automation:** `entrypoint.sh` runs under `set -e` and will now
-  abort on a failed export, and CI jobs or wrappers that relied on the
-  always-zero exit will start reporting failure.
+
+  **Scope: the CLI, not the container.** `entrypoint.sh` deliberately still
+  tolerates a failed export: it captures the status instead of letting `set -e`
+  abort, reports it on **stderr**, prints `Export completed successfully!` as
+  before, and exits `0`. A direct CLI or CI invocation still sees the truth. This
+  keeps the unattended container path behaving as it always has for pipelines
+  that mount a volume, run the export, and collect whatever was written — a
+  partial export is kept rather than discarded, and the container is not marked
+  failed.
 - **A partially-failed export is no longer reported as a clean run.** Failures
   are counted per category and summarised at the end. The run still completes
   and still writes what it could; only the messaging changed.
@@ -77,8 +83,8 @@ misleading exit status, and adds the tooling to stop them coming back.
 ### Added
 
 - 68 tests (`npm test`) covering Markdown conversion, internal-link resolution,
-  name sanitisation, retry semantics, the run summary, notebook selection, and
-  the asset pipeline against a real browser.
+  name sanitisation, retry semantics, the run summary, notebook selection, the
+  asset pipeline against a real browser, and `entrypoint.sh`'s failure handling.
 - ESLint (`npm run lint`) configured for defect detection rather than style, and
   a GitHub Actions workflow running lint, tests and a CLI smoke test.
 - `REVIEW-CODE.md`: the full review, with per-finding evidence, fix status, and
