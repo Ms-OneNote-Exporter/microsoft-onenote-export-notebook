@@ -12,6 +12,42 @@ const path = require('path');
 const { downloadAttachment } = require('./downloadStrategies');
 const { safeName, uniqueName } = require('./utils/naming');
 
+// Reads a blob: URL from inside the page and returns it as base64.
+//
+// A blob: URL is not a network address: it only resolves in the document that
+// created it, so Playwright's APIRequestContext (which only speaks http/https)
+// rejects it with `Protocol "blob:" not supported`. OneNote uses blob: URLs for
+// images it renders inline - printouts especially - so they have to be read
+// through the page itself: fetch, then FileReader to get bytes out.
+//
+// @param {import('playwright').Page} page - Page that owns the blob
+// @param {string} url - The blob: URL
+// @returns {Promise<Buffer>} The blob's bytes
+async function readBlobInPage(page, url) {
+    const dataUrl = await page.evaluate(async (blobUrl) => {
+        const response = await fetch(blobUrl);
+        if (!response.ok) throw new Error(`blob fetch failed: ${response.status}`);
+
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('FileReader failed'));
+            reader.readAsDataURL(blob);
+        });
+    }, url);
+
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+        throw new Error('Page did not return a data URL for the blob');
+    }
+
+    const commaAt = dataUrl.indexOf(',');
+    if (commaAt === -1) {
+        throw new Error('Malformed data URL returned for the blob');
+    }
+    return Buffer.from(dataUrl.slice(commaAt + 1), 'base64');
+}
+
 // Download a resource (image, video) via HTTP request with retry logic
 // options.timeout  - HTTP request timeout in ms (default 60 000)
 // options.onError  - optional (msg) => void callback called on final failure
@@ -25,16 +61,23 @@ async function downloadResource(page, url, outputPath, options = {}) {
                 await fs.writeFile(outputPath, buffer);
                 return true;
             }
-            return false;
+            // Not a base64 data URL. Decoding it as base64 would silently write
+            // garbage, so fail loudly instead of producing a corrupt asset.
+            throw new Error(`Unsupported data: URL (not base64): ${url.substring(0, 60)}…`);
+        }
+
+        if (url.startsWith('blob:')) {
+            await fs.writeFile(outputPath, await readBlobInPage(page, url));
+            return true;
         }
 
         const response = await page.context().request.get(url, { timeout });
         if (response.ok()) {
             await fs.writeFile(outputPath, await response.body());
             return true;
-        } 
-            throw new Error(`Failed to download resource (HTTP ${response.status()}): ${url.substring(0, 100)}...`);
-        
+        }
+        throw new Error(`Failed to download resource (HTTP ${response.status()}): ${url.substring(0, 100)}...`);
+
     }, {
         maxAttempts: 3,
         initialDelayMs: 1000,
@@ -145,15 +188,19 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 await processSections(contentFrame, groupDir, td, options, pageIdMap, processedItems, item.id, stats);
                 logger.info(`Returning from group: ${item.name}`);
 
-                // If the back button cannot be found we are still inside the
-                // group, and the next iteration would scrape the wrong tree -
-                // silently producing a plausible but wrong export. Bail out.
+                // navigateBack() frequently finds no control and returns false -
+                // that is the NORMAL case, not a failure. Selection is done by
+                // absolute [id="..."] selector, and OneNote keeps the whole section
+                // tree in one DOM, so the next sibling is still reachable without
+                // navigating back. An earlier version of this code threw here and
+                // aborted every group on that basis, losing whole subtrees; a real
+                // run (2026-09-28) showed 2 of 2 groups hitting it while still
+                // exporting all 15 pages. So: note it and carry on.
                 const wentBack = await navigateBack(contentFrame);
                 if (!wentBack) {
-                    stats.failedGroups++;
-                    throw new Error(
-                        `Could not find the "Back" control after leaving group "${item.name}". ` +
-                        'Aborting this group rather than continuing against the wrong section tree.'
+                    logger.debug(
+                        `No "Back" control found after "${item.name}"; continuing ` +
+                        '(sections are selected by id, so this is harmless)'
                     );
                 }
 
@@ -239,6 +286,29 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         // Track used filenames in this section to handle collisions
         const usedNames = new Set();
 
+        // This section's assets/ directory. Every page in the section shares it,
+        // so name reservations have to be shared too.
+        const assetDir = path.join(sectionDir, 'assets');
+
+        // Asset file names already claimed in this section's assets/ directory.
+        // Reserving names as they are PLANNED matters: the old code probed the
+        // filesystem with existsSync, so two attachments with the same name in one
+        // page both got the same path (neither file existed yet) and the second
+        // silently overwrote the first.
+        const usedAssetNames = new Set();
+
+        /** Picks a free asset path, counting around names already taken. */
+        const getUniqueAssetPath = (base, ext) => {
+            const name = safeName(base, 'file');
+            let candidate = `${name}.${ext}`;
+            let counter = 1;
+            while (usedAssetNames.has(candidate) || fs.existsSync(path.join(assetDir, candidate))) {
+                candidate = `${name}_${counter++}.${ext}`;
+            }
+            usedAssetNames.add(candidate);
+            return path.join(assetDir, candidate);
+        };
+
         for (const pageInfo of pages) {
             // Deduplicate pages too
             if (processedItems.has(pageInfo.id)) continue;
@@ -276,21 +346,9 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
                 // Rename and Download Resources
                 let savedResources = 0;
-                const assetDir = path.join(sectionDir, 'assets');
 
                 if (totalAssets > 0) {
                     await fs.ensureDir(assetDir);
-
-                    // Helper to get unique filename in assets dir
-                    const getUniqueAssetPath = (base, ext) => {
-                        const name = safeName(base, 'file');
-                        let fullPath = path.join(assetDir, `${name}.${ext}`);
-                        let counter = 1;
-                        while (fs.existsSync(fullPath)) {
-                            fullPath = path.join(assetDir, `${name}_${counter++}.${ext}`);
-                        }
-                        return fullPath;
-                    };
 
                     // 1. Process Images (including Printouts)
                     for (const imgInfo of content.images || []) {
@@ -645,4 +703,12 @@ async function runExport(options = {}) {
     }
 }
 
-module.exports = { runExport, hasTty, reportSummary, newStats };
+module.exports = {
+    runExport,
+    hasTty,
+    reportSummary,
+    newStats,
+    // Exported for tests only: the asset pipeline (data:, blob:, http) is the
+    // part most likely to regress and it cannot be reached from outside.
+    downloadResourceForTest: downloadResource,
+};

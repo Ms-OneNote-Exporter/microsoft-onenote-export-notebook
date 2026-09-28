@@ -56,6 +56,10 @@ const browserGlobals = {
     getComputedStyle: 'readonly',
     location: 'readonly',
     MutationObserver: 'readonly',
+    // Used by exporter.js to read a blob: URL out of the page as base64.
+    FileReader: 'readonly',
+    Blob: 'readonly',
+    Response: 'readonly',
 };
 
 module.exports = [
@@ -64,7 +68,7 @@ module.exports = [
     },
     {
         // Files that scrape the DOM: their evaluate() callbacks run in the browser.
-        files: ['src/scrapers.js', 'src/navigator.js', 'src/diagnose-*.js'],
+        files: ['src/scrapers.js', 'src/navigator.js', 'src/diagnose-*.js', 'src/exporter.js'],
         languageOptions: {
             globals: { ...nodeGlobals, ...browserGlobals },
         },
