@@ -556,7 +556,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | open |
 | F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | open |
 | F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | open |
-| F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally | open (safe-ish now that F-01 is fixed) |
+| F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally | **closed by decision** — the unconditional message is now intentional (see note) |
 | F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | open |
 | F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | open |
 | F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | open |
@@ -599,6 +599,18 @@ all Low/Info items · `npm test` real tests + CI workflow.
   but must verify the name before clicking.
 - Removing the duplicated `runExport` flow touches the export hot path and is best done
   with the fixture tests already in place (P3 after P2).
+- **F-45 / F-01 interaction — resolved by the maintainer, 2026-09-28.** This review
+  recommended that `entrypoint.sh` assert the export's exit status. The maintainer chose
+  the opposite: the container must carry on and print "Export completed successfully!"
+  even when the export failed, because that is the documented unattended path and callers
+  collect whatever was written from a mounted volume. Aborting would discard a partial
+  result and mark the container failed. So `entrypoint.sh` now captures the status rather
+  than letting `set -e` abort, prints the failure on **stderr**, keeps the stdout
+  completion line byte-identical for log scrapers, and exits `0`. The tool itself still
+  exits `1`, so a direct CLI or CI run reports the truth; the tolerance is confined to the
+  container wrapper. Pinned by `test/entrypoint.test.js`, which runs the real script with
+  a stubbed `node` and fails against the pre-change behaviour (verified: that version
+  exits `1` and prints nothing).
 
 ## 8. Definition of done
 
