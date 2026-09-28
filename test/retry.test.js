@@ -46,6 +46,50 @@ describe('permanent errors', () => {
     });
 });
 
+describe('the wall-clock budget (maxElapsedMs)', () => {
+    // An attempt count is the wrong unit when the attempt is a 15 second round
+    // trip to a cloud service. A real run spent ~90s on each of several
+    // attachments that could not be fetched, which is what made a working export
+    // look hung; the budget is what bounds that.
+
+    it('stops before starting an attempt that cannot fit in the budget', async () => {
+        const slowFailure = async () => {
+            await new Promise((r) => setTimeout(r, 120));
+            throw new Error('cloud said no');
+        };
+        const fn = jest.fn(slowFailure);
+
+        const started = Date.now();
+        await expect(withRetry(fn, {
+            maxAttempts: 10, initialDelayMs: 200, silent: true, maxElapsedMs: 400,
+        })).rejects.toThrow('cloud said no');
+
+        // 120ms per attempt + 200ms backoff: attempt 1 at ~0, attempt 2 at ~320,
+        // and a third would start at ~640 - past the 400ms budget.
+        expect(fn).toHaveBeenCalledTimes(2);
+        expect(Date.now() - started).toBeLessThan(700);
+    });
+
+    it('leaves a fast operation alone when it succeeds inside the budget', async () => {
+        const fn = jest.fn()
+            .mockRejectedValueOnce(new Error('transient'))
+            .mockResolvedValue('ok');
+
+        await expect(withRetry(fn, {
+            maxAttempts: 5, initialDelayMs: 1, silent: true, maxElapsedMs: 10000,
+        })).resolves.toBe('ok');
+    });
+
+    it('does not cut a single first attempt short', async () => {
+        // A budget must never prevent the first try: the operation may well be
+        // slower than the whole budget and still be the one that works.
+        const fn = jest.fn().mockResolvedValue('ok');
+
+        await expect(withRetry(fn, { silent: true, maxElapsedMs: 1 })).resolves.toBe('ok');
+        expect(fn).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('withRetry', () => {
     it('returns the value on the first success without retrying', async () => {
         const fn = jest.fn().mockResolvedValue('ok');

@@ -58,4 +58,24 @@ program
         }
     });
 
-program.parse();
+// A Playwright target that dies mid-run - the tab closed, the renderer crashed,
+// the browser was killed - also rejects one of Playwright's own internal
+// promises, which nothing here awaits. Node treats that as fatal and kills the
+// process with a bare stack trace, which is how a dead OneNote tab used to end
+// an export: no "Export failed", no summary, no browser cleanup, and an exit
+// status that had nothing to do with the export.
+//
+// Report it like any other failure and let the run finish unwinding. The exit
+// code is set rather than the process ended, so an export that is still writing
+// files gets to stop cleanly.
+process.on('unhandledRejection', (reason) => {
+    logger.error('Unexpected internal failure during the export (this is a bug):', reason);
+    process.exitCode = 1;
+});
+
+program.parseAsync().catch((e) => {
+    // The action handler above already catches and reports its own failures; this
+    // is the net for anything else, including a throw while arguments are parsed.
+    logger.error('Export failed:', e);
+    process.exit(1);
+});

@@ -277,7 +277,12 @@ async function tryUIClick(contentFrame, attachId, outputPath) {
                 await btnInFrame.click();
             }
         } catch (e) {
-            // Ignore if no modal appears
+            // Not a silent skip any more: this catch is why a real failure here
+            // was invisible for hours. A 2026-09-28 run spent 90s per attachment
+            // re-running this path and never once logged why the confirmation was
+            // not clicked, because the exception explaining exactly that was
+            // thrown away here.
+            Logger.debug(`      [Strategy: UI Click] Confirmation handling threw: ${e.message.split('\n')[0]}`);
         }
 
         // Race the events
@@ -380,6 +385,13 @@ async function downloadAttachment(contentFrame, info, outputPath) {
     }, {
         maxAttempts: 3,
         initialDelayMs: 2000, // Longer delay for SharePoint redirects
+        // A wall-clock budget, not just an attempt count. The three strategies
+        // below each cost 10-15 seconds when they fail, so three attempts of
+        // everything is ~90s per file, and a page with several attachments turns
+        // a working export into one that looks hung. 30s per attachment is enough
+        // for the strategy that actually works - the UI click downloads in about
+        // 4s - and bounds the damage from the ones that never will.
+        maxElapsedMs: 30000,
         operationName: `Download attachment ${info.originalName}`,
         silent: true
     }).catch(e => {
