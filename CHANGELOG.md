@@ -90,12 +90,33 @@ misleading exit status, and adds the tooling to stop them coming back.
   identical warnings ~8s apart per attachment are gone. The retry budget is
   unchanged for genuinely transient cloud failures.
 
+### Changed
+
+- **Debug output is off by default.** It was previously unconditional, so every run
+  filled stdout and the log with scraper and navigation chatter. Use `--verbose`
+  (or `ONENOTE_EXPORT_LOG_LEVEL=debug`) to get it back, and `--quiet` to see only
+  warnings and errors.
+- **Logs no longer land inside `node_modules`.** The path was hardcoded relative to
+  the package, so `npm install -g @msout/microsoft-onenote-export-notebook` — the
+  install the README recommends — wrote to
+  `<prefix>/lib/node_modules/@msout/…/logs/app.log`. Logs now go to
+  `~/.local/state/microsoft-onenote-export-notebook` for a global install (honouring
+  `XDG_STATE_HOME`) and stay in `<package>/logs` for a checkout.
+  `ONENOTE_EXPORT_LOG_DIR` overrides both. `app.log` rotates to `app.log.1` past 5 MB.
+- **Logs and HTML dumps are now owner-only** (`0600`/`0700`). `--dodump` writes the
+  authenticated DOM of a real notebook — cookies, tenant hostnames, note content — and
+  was creating those files world-readable. An existing over-permissive `app.log` is
+  tightened on the next run.
+- Log timestamps now include the year and a UTC offset, so an overnight run that crosses
+  midnight is unambiguous.
+
 ### Added
 
-- 107 tests (`npm test`) covering Markdown conversion, internal-link resolution,
+- 124 tests (`npm test`) covering Markdown conversion, internal-link resolution,
   name sanitisation, retry semantics, the run summary, notebook selection, the
-  asset pipeline against a real browser, `entrypoint.sh`'s failure handling, and
-  the Docker build inputs (`Dockerfile`, `.dockerignore`, `start-container.sh`).
+  asset pipeline against a real browser, `entrypoint.sh`'s failure handling, log
+  level gating and log-path resolution, and the Docker build inputs
+  (`Dockerfile`, `.dockerignore`, `start-container.sh`).
 - ESLint (`npm run lint`) configured for defect detection rather than style, and
   a GitHub Actions workflow running lint, tests and a CLI smoke test.
 - `REVIEW-CODE.md`: the full review, with per-finding evidence, fix status, and

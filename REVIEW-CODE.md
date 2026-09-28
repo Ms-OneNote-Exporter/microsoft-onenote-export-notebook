@@ -553,17 +553,18 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | **partly fixed** `b77417f` (permanent failures no longer retried; per-attachment time budget still open) |
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
-| F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | open |
-| F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | open |
+| F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | **fixed** — `--verbose`/`--quiet` + `ONENOTE_EXPORT_LOG_LEVEL`, default hides debug; rotates at 5 MB |
+| F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | **fixed** — XDG state dir for global installs, `ONENOTE_EXPORT_LOG_DIR` override |
 | F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | open |
 | F-45 | Medium | `entrypoint.sh:33` | Prints "completed successfully" unconditionally | **closed by decision** — the unconditional message is now intentional (see note) |
 | F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | **fixed** — name, image, output dir and auth file all overridable; `--init` + `--shm-size=1g` added |
 | F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | open |
-| F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | open |
+| F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | **fixed** — dirs 0700, files 0600, existing app.log tightened at startup |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | open |
 | F-23 | Medium | `scrapers.js:302` | 20+ untestable inline heuristics; extension regex duplicated 3× | open |
 | F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11 | Low/Info | various | Dead code, empty catches, `no-cond-assign`, unused params, useless escapes | **fixed** `a306c9d` |
-| F-13, F-16, F-18, F-19, F-27, F-28, F-34, F-35, F-38, F-39, F-41, F-43, F-49, F-50 | Low/Info | various | Polish, doc drift, latent fragility | open |
+| F-13, F-16, F-18, F-19, F-27, F-28, F-34, F-35, F-39, F-41, F-43, F-49, F-50 | Low/Info | various | Polish, doc drift, latent fragility | open |
+| F-38 | Low | `logger.js:25-31` | Timestamp omitted the year and timezone; `dumpSubDir` has minute granularity | **partly fixed** — ISO date + UTC offset added; dump-dir granularity unchanged |
 
 Severity scale: **Critical** = silent data loss / false success / security ·
 **High** = wrong output or hangs · **Medium** = maintainability, perf, portability ·
