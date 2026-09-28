@@ -419,13 +419,15 @@ things no amount of code reading had found, which is the argument for running th
   second was planned) and the second clobbered the first. The log shows the confusing
   version of this: `…_nosl.docx` reported as failed, then a later duplicate landing on the
   unsuffixed name. Names are now reserved as they are planned, per section.
-- **F-32 (confirmed in production, still open)** — the retry multiplication is real and
-  visible: `[Strategy: UI Click] Could not find clickable element for file_1` appears three
-  times, ~7–9s apart, per attachment, then a scary `ERROR: All download strategies failed`.
-  The unit tests now show the same cost directly — the two permanent-failure cases each
-  take exactly 3s of pure backoff. Still deliberately **not** "fixed" by tuning
-  `maxAttempts`: the same run shows the retry is load-bearing for the cases that *do*
-  succeed, and changing it blind is precisely the mistake F-21 was.
+- **F-32 (partly fixed `b77417f`)** — the retry multiplication was visible in the run:
+  `[Strategy: UI Click] Could not find clickable element for file_1` three times, ~7–9s
+  apart, per attachment, then `ERROR: All download strategies failed`. Fixed the provable
+  half: `withRetry` now honours `error.permanent`, and the one case that cannot change
+  between attempts — a clickable element that never appears in the DOM, when nothing
+  re-navigates or re-renders — no longer burns the backoff. `maxAttempts` is deliberately
+  **unchanged**, because the same log shows the retry is load-bearing for the attachments
+  that *do* succeed. The remaining cost (retrying genuinely transient cloud failures) is
+  still unbounded per attachment and is left for a time-budget design.
 - **F-53 (Low, fixed `4e8d065`)** — a non-base64 `data:` URL returned `false` silently (or,
   in the base64 branch, would have written garbage). It now fails with a stated reason.
 - Also noted, no action yet: the first invocation was interrupted with `^C` during the
@@ -548,7 +550,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-02 | Medium | `scrapers.js:1` | **Corrected:** unused `logger` import ⇒ 4 `console.*` calls bypass `logs/app.log`. Those calls are inside browser-context `evaluate()` callbacks, so the logger is not available there. | partially fixed `a306c9d` |
 | F-21 | Low | `exporter.js:122` | ~~`navigateBack` failure ignored ⇒ traversal continues against the wrong tree~~ — **disproved by a real run**; the throw I added broke the export. Reverted `4e8d065`. | reverted |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | **fixed** `d878ceb` |
-| F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | open |
+| F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | **partly fixed** `b77417f` (permanent failures no longer retried; per-attachment time budget still open) |
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | open |
@@ -623,9 +625,10 @@ all Low/Info items · `npm test` real tests + CI workflow.
 | `e2debbb` | Register status; **F-02 corrected** |
 | `d878ceb` | **F-20** name verification, **F-21** `navigateBack`, **F-22** empty-group warning, unhandled-rejection guard |
 | `4e8d065` | **Regression from `d878ceb` reverted** (F-21 was wrong), **F-51** blob URLs, **F-52** asset name reservation, **F-53** data: URL validation, CI installs Chromium |
+| `b77417f` | **F-32 partly fixed** — permanent failures skip the retry backoff; `maxAttempts` deliberately unchanged |
 
-**Fixed: 1 Critical, 6 High, 10 Medium, 14 Low/Info.** Open: F-23, F-32, F-33, F-36, F-37,
-F-40, F-44, F-45, F-46, F-47, F-48 and the Low/Info tail.
+**Fixed: 1 Critical, 6 High, 10 Medium, 14 Low/Info.** Open: F-23, F-32 (time budget), F-33,
+F-36, F-37, F-40, F-44, F-45, F-46, F-47, F-48 and the Low/Info tail.
 
 ### Lesson worth keeping (from F-21)
 
