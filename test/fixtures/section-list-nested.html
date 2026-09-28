@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!--
+  Fixture: a section tree with one group EXPANDED, so getSections(frame, parentId)
+  has to find the group's children rather than the top level.
+
+  Derived from dumps/20260927/debug_group.html (STEP 3), de-identified.
+
+  The part that matters: the children live inside a div[role="group"], which is
+  what the "direct child" filter in getSections() uses to distinguish siblings
+  from descendants. Without that wrapper the same query would return all six
+  items at every level, and a recursive export would loop.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>expanded section group fixture</title></head>
+<body>
+  <div class="sectionList">
+
+    <div id="11111111-1111-4111-8111-111111111111"
+         class="sectionListItem mainItem__item___AAAA"
+         draggable="true">
+      <div class="navItem navItem__item____EEEE sectionItem" role="treeitem"
+           aria-label="Section Alpha, Section." data-tip="Section Alpha" tabindex="0">
+        <div class="mainItem__itemWrap___GGGG"><div class="colorBlock__colorBlock___HHHH"></div></div>
+      </div>
+    </div>
+
+    <!-- The group, with its contents in a [role="group"] wrapper. -->
+    <div id="https%3A%2F%2Fexample%2Dtenant%2Esharepoint%2Ecom%2Ffake%2Ffolder%2F11111111111111111111111111111111"
+         class="sectionGroup__groupItemWrap___LLLL"
+         aria-label="Section Group One, Section Group. Expanded."
+         role="treeitem" tabindex="0">
+      <div class="navItem sectionGroupItem"><span>Section Group One</span></div>
+
+      <div role="group" aria-label="Section Group One" class="sectionGroup__groupContent___PPPP">
+        <div id="33333333-3333-4333-8333-333333333333"
+             class="sectionListItem mainItem__item___AAAA"
+             draggable="true">
+          <div class="navItem navItem__item____EEEE sectionItem" role="treeitem"
+               aria-label="Nested Section One, Section." tabindex="0">
+            <div class="mainItem__itemWrap___GGGG"></div>
+          </div>
+        </div>
+
+        <!-- A group nested inside a group: the recursion has to handle depth > 1. -->
+        <div id="https%3A%2F%2Fexample%2Dtenant%2Esharepoint%2Ecom%2Ffake%2Ffolder%2F22222222222222222222222222222222"
+             class="sectionGroup__groupItemWrap___LLLL"
+             aria-label="Nested Group, Section Group. Expanded."
+             role="treeitem" tabindex="0">
+          <div class="navItem sectionGroupItem"><span>Nested Group</span></div>
+
+          <div role="group" aria-label="Nested Group" class="sectionGroup__groupContent___PPPP">
+            <div id="44444444-4444-4444-8444-444444444444"
+                 class="sectionListItem mainItem__item___AAAA"
+                 draggable="true">
+              <div class="navItem navItem__item____EEEE sectionItem" role="treeitem"
+                   aria-label="Deeply Nested Section, Section." tabindex="0">
+                <div class="mainItem__itemWrap___GGGG"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

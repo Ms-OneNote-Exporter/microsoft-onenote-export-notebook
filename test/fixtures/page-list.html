@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<!--
+  Fixture: the page list for one section, as getPages() sees it.
+
+  Derived from dumps/20260927/debug_group.html (STEP 3/4), de-identified.
+
+  What getPages() depends on, and why each piece is here:
+    - div.pageNode           the query
+    - id="{uuid}{n}"         the page id, braces and numeric suffix included -
+                             this is the shape linkResolver has to match against hrefs
+    - div.pageListItem       the clickable wrapper
+    - div.navItem[aria-label] where the name comes from
+    - ", page 1 of 8"        stripped by the "page X of Y" rule
+    - ", Page. Selected. …"  stripped by the ",\s*Page\.?\s*Select" rule
+    - a page with no label   so the 'Untitled Page' fallback is exercised
+
+  The two label shapes below are the ones that actually occur. Both were read out
+  of the capture, not invented:
+
+    <name>, page <N> of <M>, Page. Select to open page contents.        (normal)
+    <name>, page <N> of <M>, Page. Selected. Press Ctrl + F6 to …       (selected)
+
+  Note the ORDER: getPages() strips the trailing "Page. Select…" first, which
+  leaves the "page N of M" at the end of the string where the second rule can
+  reach it. A label shaped "<name>, page 2 of 5, Page." - i.e. the "Page." marker
+  with nothing after it - is NOT a shape this capture contains, and is
+  deliberately not asserted here. See REVIEW-CODE.md for why.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>page list fixture</title></head>
+<body>
+  <div id="PageList" class="pageList">
+
+    <div class="pageNode" id="{aaaaaaaa-1111-4111-8111-111111111111}{1}">
+      <div class="insertionHint__insertionHint___FVUWF" style="overflow: hidden;">
+        <div class="insertionHint__circleOuter___B3B9N"></div>
+      </div>
+      <div class="pageListItem mainItem__item___AAAA mainItem__navItembackgroundSelected___BBBB" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" data-is-focusable="true" role="button"
+             aria-label="First Page, page 1 of 5, Page. Selected. Press Ctrl + F6 to navigate to page contents."
+             aria-selected="true" data-tip="First Page" tabindex="0" data-selection-index="0">
+          <div class="mainItem__itemWrap___GGGG"><div class="colorBlock__colorBlock___HHHH"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pageNode" id="{bbbbbbbb-2222-4222-8222-222222222222}{2}">
+      <div class="pageListItem mainItem__item___AAAA" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" data-is-focusable="true" role="button"
+             aria-label="Second Page, page 2 of 5, Page. Select to open page contents."
+             aria-selected="false" data-tip="Second Page" tabindex="0" data-selection-index="1">
+          <div class="mainItem__itemWrap___GGGG"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- A name that itself contains the word "Page", to catch over-eager stripping. -->
+    <div class="pageNode" id="{cccccccc-3333-4333-8333-333333333333}{3}">
+      <div class="pageListItem mainItem__item___AAAA" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" role="button"
+             aria-label="Notes about Page Layout, page 3 of 5, Page. Select to open page contents."
+             aria-selected="false" data-tip="Notes about Page Layout" tabindex="0" data-selection-index="2">
+          <div class="mainItem__itemWrap___GGGG"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- No list item at all: the 'Untitled Page' fallback. -->
+    <div class="pageNode" id="{dddddddd-4444-4444-8444-444444444444}{4}">
+      <div class="insertionHint__circleOuter___B3B9N"></div>
+    </div>
+
+    <!-- A label with no page-of-N suffix and no trailing "Page." - the older shape. -->
+    <div class="pageNode" id="{eeeeeeee-5555-4555-8555-555555555555}{5}">
+      <div class="pageListItem mainItem__item___AAAA" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" role="button"
+             aria-label="Fifth Page" aria-selected="false" tabindex="0" data-selection-index="4">
+          <div class="mainItem__itemWrap___GGGG"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

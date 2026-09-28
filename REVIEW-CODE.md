@@ -437,7 +437,36 @@ things no amount of code reading had found, which is the argument for running th
 
 - **Exit criteria met:** every module in §6 has findings or an explicit clean note.
 
-### Phase 3 — Architecture & duplication (M)
+### Phase 2c — Findings from the live DOM capture (2026-09-28)
+
+Captured the real OneNote UI (STEP 1–4) into `dumps/20260927/` and derived de-identified
+fixtures in `test/fixtures/`. Two of the three findings cut *against* my own earlier work:
+
+- **F-20 is not reachable as I described it.** I reported that a notebook row index could
+  collide across tables and cause the wrong notebook to be exported. The capture shows
+  **exactly one table** of notebook rows on the list page (14 rows, 13 notebooks, `rowIndex`
+  starting at 1). So the cross-table mechanism does not occur. The name verification added in
+  `d878ceb` is therefore **defense-in-depth, not a proven bug fix**, and the register has been
+  corrected to say so. Keeping it is still right — the index is derived from a rendered table
+  that can re-render between listing and clicking, and duplicate notebook names *do* occur
+  (two rows were both `John @ MOBILUTILS`) — but I should not have presented a mechanism I had
+  not observed as if it were established.
+- **F-19-style discipline paid off again.** My first `page-list.html` fixture used a label
+  shaped `<name>, page 2 of 5, Page.` and two tests failed. Rather than "fixing" the code, I
+  checked the capture: that shape **does not occur**. The real labels are
+  `…, Page. Select to open page contents.` and `…, Page. Selected. Press Ctrl + F6 to …`, and
+  the existing code handles both. The fixture was wrong, not the tool. Recorded as a fragility
+  note below rather than a speculative fix.
+- **New, confirmed from the capture:** section ids are plain UUIDs, page ids are `{uuid}{n}`,
+  and **group ids are URL-encoded absolute SharePoint folder URLs**. All are comfortably over
+  the 20-character `MIN_ID_LENGTH` that `linkResolver.js` uses to reject accidental substring
+  matches, which validates that guard against real data.
+
+Fixtures commit only structure: names, UUIDs, CSS-module hashes and tenant strings are
+placeholders, and `test/scrapers.fixture.test.js` asserts that no tenant or account identifier
+survives, so a future raw capture pasted in unscrubbed fails the suite.
+
+
 - Map the duplicated `--notebook-link` vs `--notebook` flow in `runExport`
   (`exporter.js:364-423` vs `426-537`).
 - Assess `processSections`' 8 positional parameters and the mutable default `stats` object.
@@ -534,7 +563,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-52 | Medium | `exporter.js:332` | Same-named attachments overwrite each other (filesystem probe instead of reserving planned names) | **fixed** `4e8d065` |
 | F-53 | Low | `exporter.js:22` | Non-base64 `data:` URL failed silently / could write garbage | **fixed** `4e8d065` |
 | F-01 | **Critical** | `exporter.js:539` | Failed export exits 0 — `runExport` swallows every error, disabling all failure detection | **fixed** `4a5e4ce` |
-| F-20 | High | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verifies the name ⇒ wrong notebook can be exported | **fixed** `d878ceb` (dump still wanted to confirm the multi-table layout) |
+| F-20 | High → **Low** | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verified the name | **corrected**: the capture shows ONE table of notebook rows, so the cross-table collision does not occur. Name verification retained as defense-in-depth `d878ceb` |
 | F-24 | High | `parser.js:72` | Video wikilinks hardcode `.mp4` while files are written with the URL's real extension | **fixed** `a306c9d` |
 | F-25 | High | `parser.js:113` | Unescaped `|` in table cells silently adds phantom columns | **fixed** `a306c9d` |
 | F-29 | High | `linkResolver.js:19` | Substring id matching with no specificity ordering ⇒ links resolve to the **wrong page** | **fixed** `a306c9d` |
@@ -567,6 +596,7 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | **fixed** — marked handled at creation, awaited later |
 | F-39 | Low | `retry.js:56` | Unreachable trailing `throw lastError` | **fixed** — now rejects instead of resolving `undefined` when `maxAttempts <= 0` |
 | F-50 | Low | `README.md` | Project Structure named a non-existent root, omitted half the repo | **fixed** — rewritten, with a test that keeps it honest |
+| F-54 | Low | `scrapers.js:132-140` | Page-label stripping is order-dependent: the trailing `Page. Select…` must be removed first for the `page N of M` rule to match at the end. A label shaped `<name>, page 2 of 5, Page.` would keep its whole suffix. **Not a live shape** — confirmed against the capture, so deliberately not "fixed" | open (documented) |
 | F-13, F-16, F-18, F-19, F-27, F-28, F-35, F-43, F-49 | Low/Info | various | Remaining polish: duplicate `runExport` flow (F-13 context), re-run asset duplication (F-16, needs a policy decision), image `alt` text, table header assumption, per-strategy download stats, diagnose-script arg parsing, image extension validation | open |
 | F-38 | Low | `logger.js:25-31` | Timestamp omitted the year and timezone; `dumpSubDir` has minute granularity | **partly fixed** — ISO date + UTC offset added; dump-dir granularity unchanged |
 

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<!--
+  Fixture: the OneNote section tree as the exporter sees it.
+
+  Extracted from a real capture (dumps/20260927/debug_notebook_content.html,
+  STEP 2) and then de-identified: every name, UUID, CSS-module hash and tenant
+  string replaced with a placeholder. Only the structure the code depends on is
+  preserved, so no notebook content or account data is committed.
+
+  What the code relies on, and why each piece is here:
+    - div.sectionListItem            the query in getSections()
+    - a plain UUID as the element id  section identity
+    - div.navItem[aria-label]        where the name is read from
+    - the ", Section" suffix          stripped off the end of that label
+    - div[role="group"]               marks a nesting level, so the "direct child"
+                                      filter can tell siblings from descendants
+    - the selection suffix            ", Section. Selected. Press Tab to ..."
+    - div.sectionGroup__groupItemWrap identifies a GROUP, and its aria-label
+                                      carries ", Section Group"
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>section list fixture</title></head>
+<body>
+  <div class="sectionList">
+
+    <!-- A plain section. -->
+    <div id="11111111-1111-4111-8111-111111111111"
+         class="sectionListItem mainItem__item___AAAA SectionColumn__item____BBBB mainItem__navItembackgroundSelected___CCCC"
+         draggable="true">
+      <div class="navItem mainItem__navItem____DDDD navItem__item____EEEE sectionItem mainItem__highContrastOutline___FFFF"
+           data-is-focusable="true" role="treeitem"
+           aria-label="Section Alpha, Section. Selected. Press Tab to navigate to page list of the section."
+           aria-selected="true" data-tip="Section Alpha" tabindex="0" data-selection-index="0">
+        <div class="mainItem__itemWrap___GGGG" style="padding-left: 0px;">
+          <div class="colorBlock__colorBlock___HHHH"><img alt="tabIcon" class="colorBlock__tab___IIII colorBlock__oldtab___JJJJ" src="data:image/gif;base64,R0lGOD"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- A second plain section, so ordering is observable. -->
+    <div id="22222222-2222-4222-8222-222222222222"
+         class="sectionListItem mainItem__item___AAAA SectionColumn__item____BBBB mainItem__navItembackground___KKKK"
+         draggable="true">
+      <div class="navItem mainItem__navItem____DDDD navItem__item____EEEE sectionItem mainItem__highContrastOutline___FFFF"
+           data-is-focusable="true" role="treeitem"
+           aria-label="Section Beta, Section. Press Tab to navigate to page list of the section."
+           aria-selected="false" data-tip="Section Beta" tabindex="0" data-selection-index="1">
+        <div class="mainItem__itemWrap___GGGG" style="padding-left: 0px;">
+          <div class="colorBlock__colorBlock___HHHH"><img alt="tabIcon" class="colorBlock__tab___IIII colorBlock__oldtab___JJJJ" src="data:image/gif;base64,R0lGOD"></div>
+        </div>
+      </div>
+    </div>
+
+    <!--
+      A section GROUP. Note the id: in the real capture a group's id is a
+      URL-encoded absolute SharePoint folder URL, not a UUID. That is kept here
+      (de-identified) because the code has to cope with it - notably linkResolver,
+      which matches group ids against hrefs.
+    -->
+    <div id="https%3A%2F%2Fexample%2Dtenant%2Esharepoint%2Ecom%2Ffake%2Ffolder%2F11111111111111111111111111111111"
+         class="sectionGroup__groupItemWrap___LLLL mainItem__item___AAAA"
+         aria-label="Section Group One, Section Group. Select to expand an empty group."
+         role="treeitem" aria-selected="false" tabindex="0" data-selection-index="2">
+      <div class="navItem mainItem__navItem____MMMM navItem__item____EEEE sectionGroupItem">
+        <div class="mainItem__itemWrap___NNNN" style="padding-left: 0px;">
+          <span class="sectionGroupItem__sectionGroupName___OOOO">Section Group One</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
