@@ -597,7 +597,8 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-39 | Low | `retry.js:56` | Unreachable trailing `throw lastError` | **fixed** — now rejects instead of resolving `undefined` when `maxAttempts <= 0` |
 | F-50 | Low | `README.md` | Project Structure named a non-existent root, omitted half the repo | **fixed** — rewritten, with a test that keeps it honest |
 | F-54 | Low | `scrapers.js:132-140` | Page-label stripping is order-dependent: the trailing `Page. Select…` must be removed first for the `page N of M` rule to match at the end. A label shaped `<name>, page 2 of 5, Page.` would keep its whole suffix. **Not a live shape** — confirmed against the capture, so deliberately not "fixed" | open (documented) |
-| F-13, F-16, F-18, F-19, F-27, F-28, F-35, F-43, F-49 | Low/Info | various | Remaining polish: duplicate `runExport` flow (F-13 context), re-run asset duplication (F-16, needs a policy decision), image `alt` text, table header assumption, per-strategy download stats, diagnose-script arg parsing, image extension validation | open |
+| F-13 | Medium | `exporter.js:544` | `runExport` contained the same ~35 lines twice (44% textual overlap between the two paths) | **fixed** — extracted `findContentFrame()` and `exportContent()`; 238 lines → 115 |
+| F-16, F-18, F-19, F-27, F-28, F-35, F-43, F-49 | Low/Info | various | Remaining polish: duplicate `runExport` flow (F-13 context), re-run asset duplication (F-16, needs a policy decision), image `alt` text, table header assumption, per-strategy download stats, diagnose-script arg parsing, image extension validation | open |
 | F-38 | Low | `logger.js:25-31` | Timestamp omitted the year and timezone; `dumpSubDir` has minute granularity | **partly fixed** — ISO date + UTC offset added; dump-dir granularity unchanged |
 
 Severity scale: **Critical** = silent data loss / false success / security ·

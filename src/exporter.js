@@ -526,6 +526,86 @@ function reportSummary(stats, linkStats, outputBase) {
 }
 
 /**
+ * Locates the OneNote content frame inside an editor page.
+ *
+ * OneNote renders the notebook inside an iframe (onenoteframe.aspx on
+ * officeapps.live.com), identified by holding `.sectionList`. The frames are
+ * probed in turn because several may be cross-origin or already detached.
+ *
+ * @param {import('playwright').Page} rootPage - Page whose frames to search
+ * @param {object} options - Export options (honours `dodump`)
+ * @returns {Promise<import('playwright').Frame|null>} The content frame, or null
+ */
+async function findContentFrame(rootPage, options) {
+    const frames = rootPage.frames();
+
+    for (const f of frames) {
+        try {
+            const hasSections = await f.$('.sectionList');
+            if (!hasSections) continue;
+
+            logger.success(`Found content frame (navigation): ${f.url()}`);
+
+            if (options.dodump) {
+                const dumpDir = await logger.getDumpDir();
+                const displayPath = logger.getDumpDisplayPath();
+                logger.warn(`Dumping content frame HTML to ${displayPath}/debug_notebook_content.html...`);
+                await fs.writeFile(path.join(dumpDir, 'debug_notebook_content.html'), await f.content());
+            }
+            return f;
+        } catch (e) {
+            // A frame can be cross-origin or already detached, in which case
+            // probing it throws. That is expected while walking the frame list, so
+            // keep going - but say so, because a frame we could not inspect is a
+            // frame we might have missed.
+            logger.debug(`Skipped an unreadable frame (${frames.length} total): ${e.message}`);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Runs the export against an already-open content frame.
+ *
+ * This is the half of `runExport` that used to be duplicated between the
+ * --notebook-link fast path and the list-and-click path. Both are now one call.
+ * The duplication was not cosmetic: the two copies had already drifted - one had
+ * a 10s wait for `.sectionList` and a debug log for unreadable frames, the other
+ * 15s and a silent empty catch - so a fix applied to one path silently missed
+ * the other.
+ *
+ * @param {object} params
+ * @param {import('playwright').Frame} params.contentFrame - Frame holding the notebook
+ * @param {string} params.notebookName - Used for the output directory name
+ * @param {object} params.options - Export options
+ * @returns {Promise<object>} Export statistics
+ */
+async function exportContent({ contentFrame, notebookName, options }) {
+    const baseDir = options.exportDir || path.resolve(__dirname, '../output');
+    const outputBase = path.resolve(baseDir, safeName(notebookName, 'Notebook'));
+    await fs.ensureDir(outputBase);
+    const td = createMarkdownConverter();
+
+    logger.info('Scanning sections...');
+    try {
+        await contentFrame.waitForSelector('.sectionList', { timeout: 15000 });
+    } catch (e) {
+        logger.warn('Timeout waiting for .sectionList, trying to scrape anyway...');
+    }
+
+    const pageIdMap = {};
+    const stats = newStats();
+    await processSections(contentFrame, outputBase, td, options, pageIdMap, new Set(), null, stats);
+
+    logger.info('Resolving internal links...');
+    const linkStats = await resolveInternalLinks(pageIdMap, outputBase);
+
+    reportSummary(stats, linkStats, outputBase);
+    return stats;
+}
+
+/**
  * Main export function.
  *
  * @param {object} options
@@ -556,58 +636,12 @@ async function runExport(options = {}) {
             logger.info('Will wait 10 seconds to let the OneNote content frame to load properly');
             await session.page.waitForTimeout(10000);
 
-            const frames = session.page.frames();
-            let contentFrame = null;
-            for (const f of frames) {
-                try {
-                    const hasSections = await f.$('.sectionList');
-                    if (hasSections) {
-                        contentFrame = f;
-                        logger.success(`Found content frame (navigation): ${f.url()}`);
-                        if (options.dodump) {
-                            const dumpDir = await logger.getDumpDir();
-                            const displayPath = logger.getDumpDisplayPath();
-                            logger.warn(`Dumping content frame HTML to ${displayPath}/debug_notebook_content.html...`);
-                            const frameContent = await f.content();
-                            await fs.writeFile(path.join(dumpDir, 'debug_notebook_content.html'), frameContent);
-                        }
-                        break;
-                    }
-                } catch (e) {
-                    // A frame can be cross-origin or already detached, in which
-                    // case probing it throws. That is expected while walking the
-                    // frame list, so keep going - but say so, because a frame we
-                    // could not inspect is a frame we might have missed.
-                    logger.debug(`Skipped an unreadable frame (${frames.length} total): ${e.message}`);
-                }
-            }
-
-            if (!contentFrame) {
+            const contentFrame = await findContentFrame(session.page, options) || session.page;
+            if (contentFrame === session.page) {
                 logger.warn('Could not auto-detect content frame. Using main page as fallback...');
-                contentFrame = session.page;
             }
 
-            const baseDir = options.exportDir || path.resolve(__dirname, '../output');
-            const outputBase = path.resolve(baseDir, safeName(notebookName, 'Notebook'));
-            await fs.ensureDir(outputBase);
-            const td = createMarkdownConverter();
-
-            logger.info('Scanning sections...');
-            try {
-                await contentFrame.waitForSelector('.sectionList', { timeout: 10000 });
-            } catch (e) {
-                logger.warn('Timeout waiting for .sectionList, trying to scrape anyway...');
-            }
-
-            const pageIdMap = {};
-            const stats = newStats();
-            await processSections(contentFrame, outputBase, td, options, pageIdMap, new Set(), null, stats);
-
-            logger.info('Resolving internal links...');
-            const linkStats = await resolveInternalLinks(pageIdMap, outputBase);
-
-            reportSummary(stats, linkStats, outputBase);
-            return stats;
+            return exportContent({ contentFrame, notebookName, options });
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -679,59 +713,16 @@ async function runExport(options = {}) {
             logger.success(`Editor URL: ${editorPage.url().substring(0, 100)}`);
 
             logger.info('Looking for OneNote content frame in editor...');
-            const frames = editorPage.frames();
-            let contentFrame = null;
-
-            // Heuristic: Find frame with .sectionList or similar
-            for (const f of frames) {
-                try {
-                    const hasSections = await f.$('.sectionList');
-                    if (hasSections) {
-                        contentFrame = f;
-                        logger.success(`Found content frame (navigation): ${f.url()}`);
-
-                        if (options.dodump) {
-                            const dumpDir = await logger.getDumpDir();
-                            const displayPath = logger.getDumpDisplayPath();
-                            logger.warn(`Dumping content frame HTML to ${displayPath}/debug_notebook_content.html...`);
-                            const frameContent = await f.content();
-                            await fs.writeFile(path.join(dumpDir, 'debug_notebook_content.html'), frameContent);
-                        }
-                        break;
-                    }
-                } catch (e) {
-                    // Ignore frames we can't access (CORS) or don't have the element
-                }
-            }
-
-            if (!contentFrame) {
+            const contentFrame = await findContentFrame(editorPage, options) || editorPage;
+            if (contentFrame === editorPage) {
                 logger.warn('Could not auto-detect content frame. Using editor page as fallback...');
-                contentFrame = editorPage;
             }
 
-            const baseDir = options.exportDir || path.resolve(__dirname, '../output');
-            const outputBase = path.resolve(baseDir, safeName(selectedNotebook.name, 'Notebook'));
-            await fs.ensureDir(outputBase);
-            const td = createMarkdownConverter();
-
-            logger.info('Scanning sections...');
-            // Wait for section list specifically
-            try {
-                await contentFrame.waitForSelector('.sectionList', { timeout: 15000 });
-            } catch (e) {
-                logger.warn('Timeout waiting for .sectionList, trying to scrape anyway...');
-            }
-
-            // Start recursive processing
-            const pageIdMap = {};
-            const stats = newStats();
-            await processSections(contentFrame, outputBase, td, options, pageIdMap, new Set(), null, stats);
-
-            logger.info('Resolving internal links...');
-            const linkStats = await resolveInternalLinks(pageIdMap, outputBase);
-
-            reportSummary(stats, linkStats, outputBase);
-            return stats;
+            return exportContent({
+                contentFrame,
+                notebookName: selectedNotebook.name,
+                options,
+            });
         }
 
         // Only reachable when the notebook picker produced no selection, which
@@ -758,4 +749,8 @@ module.exports = {
     // test can assert both the verdict and that the warning is emitted once.
     classifyFetchTarget,
     __resetFetchHostWarnings: () => warnedFetchHosts.clear(),
+    // Exported for tests: the shared half of an export, so the whole pipeline can
+    // be run against a fixture without navigating to a real notebook.
+    exportContent,
+    findContentFrame,
 };
