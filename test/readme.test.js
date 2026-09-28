@@ -50,6 +50,11 @@ describe('README project structure', () => {
     it.each([
         'Dockerfile', 'entrypoint.sh', 'start-container.sh', 'CHANGELOG.md',
         '.github/workflows/ci.yml',
+        // The publish workflow is listed for the same reason as the others: the
+        // README tree is meant to describe the repository, and a release path
+        // that only exists in .github/ is exactly the sort of thing a reader
+        // needs to be told about.
+        '.github/workflows/npm-publish.yml',
     ])('describes %s', (file) => {
         expect(fs.existsSync(path.join(ROOT, file))).toBe(true);
         expect(listed(file)).toBe(true);
