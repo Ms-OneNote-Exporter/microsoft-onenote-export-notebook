@@ -334,18 +334,31 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         const assetDir = path.join(sectionDir, 'assets');
 
         // Asset file names already claimed in this section's assets/ directory.
-        // Reserving names as they are PLANNED matters: the old code probed the
-        // filesystem with existsSync, so two attachments with the same name in one
-        // page both got the same path (neither file existed yet) and the second
-        // silently overwrote the first.
+        // This is a within-run reservation, and it is what stops two attachments
+        // that sanitise to the same name in one page from colliding.
+        //
+        // It deliberately does NOT consult the filesystem. It used to, which meant
+        // re-running an export into the same output folder found the previous run's
+        // files and wrote report.pdf_1, report.pdf_2, ... instead of refreshing
+        // them, so a vault filled with near-duplicates after a few runs. Overwrite
+        // is the default now: a name is claimed once per run, so a re-run replaces
+        // the file with the current version. Files from a previous run that no
+        // longer correspond to anything in the notebook are left alone - nothing
+        // deletes them - which is why exportContent warns when the target folder
+        // already exists.
         const usedAssetNames = new Set();
 
-        /** Picks a free asset path, counting around names already taken. */
+        /**
+         * Picks an asset path, counting around names claimed earlier in this run.
+         * @param {string} base - Desired file name without extension
+         * @param {string} ext - File extension
+         * @returns {string} Absolute path to write
+         */
         const getUniqueAssetPath = (base, ext) => {
             const name = safeName(base, 'file');
             let candidate = `${name}.${ext}`;
             let counter = 1;
-            while (usedAssetNames.has(candidate) || fs.existsSync(path.join(assetDir, candidate))) {
+            while (usedAssetNames.has(candidate)) {
                 candidate = `${name}_${counter++}.${ext}`;
             }
             usedAssetNames.add(candidate);
@@ -566,6 +579,43 @@ async function findContentFrame(rootPage, options) {
 }
 
 /**
+ * Warns when the notebook's output folder already has content in it.
+ *
+ * The export overwrites by default: a re-run replaces each file with the current
+ * version rather than writing `report.pdf_1`, `report.pdf_2` and so on. That is
+ * the useful behaviour for a re-export, and it is what was asked for - but it
+ * should not happen silently, because a folder full of Markdown is someone's
+ * notes.
+ *
+ * One caveat worth stating: files from a previous run that no longer correspond
+ * to anything in the notebook are NOT removed. Deleting them automatically would
+ * risk destroying hand-edits, so the stale files stay. Say so rather than let
+ * someone assume the folder is now a mirror of the notebook.
+ *
+ * @param {string} outputBase - The notebook's output directory
+ * @returns {boolean} True when the folder already existed with content
+ */
+function warnIfOutputExists(outputBase) {
+    let entries;
+    try {
+        entries = fs.readdirSync(outputBase);
+    } catch (e) {
+        // Does not exist yet, or is unreadable: nothing to warn about.
+        return false;
+    }
+
+    if (entries.length === 0) {
+        return false;
+    }
+
+    logger.warn(`Output folder already exists: ${outputBase}`);
+    logger.warn('  Existing Markdown and assets in it will be overwritten by this run.');
+    logger.warn('  Files from a previous run that are no longer in the notebook are left in place,');
+    logger.warn('  so this is a merge, not a clean mirror. Remove the folder first for a clean export.');
+    return true;
+}
+
+/**
  * Runs the export against an already-open content frame.
  *
  * This is the half of `runExport` that used to be duplicated between the
@@ -584,6 +634,11 @@ async function findContentFrame(rootPage, options) {
 async function exportContent({ contentFrame, notebookName, options }) {
     const baseDir = options.exportDir || path.resolve(__dirname, '../output');
     const outputBase = path.resolve(baseDir, safeName(notebookName, 'Notebook'));
+
+    // Checked before the directory is created, so an existing-but-empty folder
+    // does not produce a warning.
+    warnIfOutputExists(outputBase);
+
     await fs.ensureDir(outputBase);
     const td = createMarkdownConverter();
 

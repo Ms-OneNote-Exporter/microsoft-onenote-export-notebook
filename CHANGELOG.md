@@ -112,6 +112,14 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Changed
 
+- **Re-exporting overwrites instead of accumulating copies.** Running an export again
+  into the same output folder used to write `report.pdf_1`, `report.pdf_2` and so on,
+  because asset names were chosen by probing the filesystem for collisions. They are
+  now reserved within a single run, so a re-run replaces each file with the current
+  version. The run warns when the notebook's output folder already exists, naming it
+  and stating that its contents will be overwritten. Note this is a **merge, not a
+  sync**: files from a previous run that no longer exist in the notebook are left in
+  place rather than deleted, so delete the folder yourself for a clean export.
 - **Debug output is off by default.** It was previously unconditional, so every run
   filled stdout and the log with scraper and navigation chatter. Use `--verbose`
   (or `ONENOTE_EXPORT_LOG_LEVEL=debug`) to get it back, and `--quiet` to see only
@@ -132,12 +140,12 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Added
 
-- 241 tests (`npm test`) covering Markdown conversion, internal-link resolution,
+- 249 tests (`npm test`) covering Markdown conversion, internal-link resolution,
   name sanitisation, retry semantics, the run summary, notebook selection, the
   asset pipeline against a real browser, `entrypoint.sh`'s failure handling, log
   level gating and log-path resolution, authentication-file validation, fetch-host classification, README accuracy, the Docker build inputs, the scrapers
   against de-identified fixtures captured from the live OneNote UI, and the whole
-  export pipeline run end to end against a fixture (`Dockerfile`, `.dockerignore`, `start-container.sh`).
+  export pipeline run end to end against a fixture, and the re-export overwrite policy (`Dockerfile`, `.dockerignore`, `start-container.sh`).
 - ESLint (`npm run lint`) configured for defect detection rather than style, and
   a GitHub Actions workflow running lint, tests and a CLI smoke test.
 - `REVIEW-CODE.md`: the full review, with per-finding evidence, fix status, and
