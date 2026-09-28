@@ -96,6 +96,15 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Changed
 
+- **Fetching from an unexpected host now warns.** Asset URLs come from page content
+  and are fetched with your signed-in session, so a link inside a shared notebook
+  decides where an authenticated request is sent. A request to a host that is not a
+  known OneNote/SharePoint/OneDrive host is now logged, once per host, naming the host
+  and explaining that the request carried your credentials. **Nothing is blocked** —
+  an allowlist would risk silently dropping legitimate attachments from a host not on
+  the list, which is a worse and far harder-to-diagnose failure.
+
+
 - Permanent failures are no longer retried. A clickable element that never
   appears in the DOM cannot appear on a second attempt, so the previous three
   identical warnings ~8s apart per attachment are gone. The retry budget is
@@ -123,10 +132,10 @@ misleading exit status, and adds the tooling to stop them coming back.
 
 ### Added
 
-- 142 tests (`npm test`) covering Markdown conversion, internal-link resolution,
+- 163 tests (`npm test`) covering Markdown conversion, internal-link resolution,
   name sanitisation, retry semantics, the run summary, notebook selection, the
   asset pipeline against a real browser, `entrypoint.sh`'s failure handling, log
-  level gating and log-path resolution, authentication-file validation, and the
+  level gating and log-path resolution, authentication-file validation, fetch-host classification, and the
   Docker build inputs (`Dockerfile`, `.dockerignore`, `start-container.sh`).
 - ESLint (`npm run lint`) configured for defect detection rather than style, and
   a GitHub Actions workflow running lint, tests and a CLI smoke test.

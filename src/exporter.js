@@ -5,6 +5,7 @@ const { getSections, getPages, selectSection, selectPage, getPageContent, naviga
 const { createMarkdownConverter } = require('./parser');
 const { resolveInternalLinks } = require('./linkResolver');
 const { withRetry, permanent } = require('./utils/retry');
+const { classifyFetchTarget } = require('./utils/fetchHosts');
 const readline = require('readline');
 const fs = require('fs-extra');
 const path = require('path');
@@ -48,6 +49,31 @@ async function readBlobInPage(page, url) {
     return Buffer.from(dataUrl.slice(commaAt + 1), 'base64');
 }
 
+/** Hosts already warned about, so one notebook cannot flood the log. */
+const warnedFetchHosts = new Set();
+
+/**
+ * Warns when a page-supplied URL points somewhere unexpected.
+ *
+ * The request is still made: refusing would risk silently dropping legitimate
+ * attachments from a host not on the list (see src/utils/fetchHosts.js for why an
+ * allowlist was rejected). The point is that it becomes visible.
+ *
+ * @param {string} url - The URL about to be fetched with the authenticated context
+ * @returns {void}
+ */
+function warnOnUnexpectedHost(url) {
+    const { host, expected, reason } = classifyFetchTarget(url);
+    if (expected || !host || warnedFetchHosts.has(host)) return;
+
+    warnedFetchHosts.add(host);
+    logger.warn(
+        `Fetching "${host}", which is ${reason}. This request is made with your ` +
+        'signed-in session, so it carries your OneDrive/SharePoint credentials. ' +
+        'If you did not expect this, check the note for external links.'
+    );
+}
+
 // Download a resource (image, video) via HTTP request with retry logic
 // options.timeout  - HTTP request timeout in ms (default 60 000)
 // options.onError  - optional (msg) => void callback called on final failure
@@ -85,6 +111,8 @@ async function downloadResource(page, url, outputPath, options = {}) {
             await fs.writeFile(outputPath, await readBlobInPage(page, url));
             return true;
         }
+
+        warnOnUnexpectedHost(url);
 
         const response = await page.context().request.get(url, { timeout });
         if (response.ok()) {
@@ -726,4 +754,8 @@ module.exports = {
     // Exported for tests only: the asset pipeline (data:, blob:, http) is the
     // part most likely to regress and it cannot be reached from outside.
     downloadResourceForTest: downloadResource,
+    // Exported for tests: the host classifier and the per-run warning memory, so a
+    // test can assert both the verdict and that the warning is emitted once.
+    classifyFetchTarget,
+    __resetFetchHostWarnings: () => warnedFetchHosts.clear(),
 };
