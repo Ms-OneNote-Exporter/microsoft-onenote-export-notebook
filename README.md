@@ -168,6 +168,7 @@ microsoft-onenote-export-notebook/
 │   ├── config.js             # Configuration (OneNote URL)
 │   ├── navigator.js          # Browser navigation (list & open notebooks)
 │   ├── exporter.js           # Main export logic (section/page traversal)
+│   ├── notebookFrame.js      # Live handle on the notebook frame (survives reloads)
 │   ├── scrapers.js           # DOM scraping (sections, pages, content)
 │   ├── parser.js             # HTML → Markdown converter (Turndown)
 │   ├── linkResolver.js       # Internal link resolution for Obsidian
@@ -241,6 +242,53 @@ if you want a clean result.
 Two attachments that resolve to the same filename *within a single run* still get
 distinct files (`report.docx` and `report_1.docx`), so one never silently clobbers the
 other.
+
+## If the editor tab goes away
+
+OneNote draws the notebook inside a frame (`onenoteframe.aspx`) in the SharePoint
+page, and it **replaces that frame whenever the page reloads** — which it does on
+its own schedule, not only when you ask it to. The exporter re-attaches to the
+replacement and carries on:
+
+```
+[INFO] The OneNote notebook frame was replaced by a page reload - re-attached and continuing.
+```
+
+If the tab itself is gone — you closed it, its renderer ran out of memory, or the
+browser was killed — the run stops and says which of those it was, because they
+need different responses:
+
+```
+[ERROR] Export failed:
+NotebookUnavailableError: the OneNote editor tab crashed (its renderer stopped),
+so the export cannot continue. This is usually the browser running out of memory
+on a heavy OneNote page: close other tabs and re-run…
+```
+
+Run with `--verbose` and the line above it records what the browser could still
+see at the moment of failure (`death=… pageClosed=… contextPages=…`), which is
+what to include in a bug report.
+
+Whatever was already written stays on disk, and re-running overwrites it rather
+than duplicating it, so a re-run is always safe. The exit code is `1`.
+
+## Attachments can be slow, and sometimes fail
+
+Attachments are fetched by three strategies in turn (a direct request, clicking
+the file in OneNote, then a plain request), each with its own retries, so a page
+with several files takes a while. Two things are worth knowing:
+
+- Each attachment is capped at **30 seconds** of wall clock. The strategy that
+  actually works — clicking the file in OneNote and confirming the download —
+  takes about four seconds, so the cap never truncates a working download; it
+  stops the failing ones from spending minutes apiece.
+- A file attachment is currently fetched more than once for a single file, and
+  the repeats are written as `file.pdf`, `file_1.pdf`, … See `REVIEW-CODE.md`
+  (F-60).
+
+A file that cannot be fetched is named in the log and is still linked by its
+planned name in the Markdown, so the note is never silently lost — it costs a
+re-run rather than correctness.
 
 ## Exit codes
 

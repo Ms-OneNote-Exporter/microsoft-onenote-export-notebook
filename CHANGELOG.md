@@ -4,6 +4,82 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The export no longer closes its own browser before it starts** (F-58).
+  `runExport` ends with a `finally` that closes the browser. Returning a
+  *promise* from inside a `try` that has a `finally` does not wait for it — the
+  `finally` runs the instant the return expression is evaluated:
+
+  ```js
+  try { return doTheWork(); }       finally { await browser.close(); }  // close() runs FIRST
+  try { return await doTheWork(); } finally { await browser.close(); }  // close() runs after
+  ```
+
+  `runExport` ended with `return exportContent({ … })`, so every export killed
+  the browser it was about to use, and the race decided whether the run got one
+  section in first. That is the whole of this failure, six runs in a row on
+  2026-09-28:
+
+  ```
+  [SUCCESS] Found content frame (navigation): https://…/onenoteframe.aspx?…
+  [INFO]    Scanning sections...
+  [WARN]    Timeout waiting for .sectionList, trying to scrape anyway...
+  frame.evaluate: Target page, context or browser has been closed
+      at getSections (src/scrapers.js:15:18)
+  ```
+
+  `Target page, context or browser has been closed` from a tab that was sitting
+  there fully rendered, on screen, is the tell: the target was not dying, the
+  tool was closing it. The last good export of the same notebook was at 12:17;
+  the regression arrived with `2807715` (13:34), which collapsed the two export
+  paths into the shared `exportContent` helper and turned a `return stats` — a
+  value, so the `finally` ran at the right time — into a `return` of a promise.
+  Both paths now `return await`, with a comment and a test. The `await` is
+  invisible to the type system and to this project's linter — `no-return-await`
+  deliberately exempts `return await` inside a `try`/`finally`, because there it
+  is required — so the regression test is what holds the line.
+- **A failing export is reported instead of crashing the process** (F-56).
+  Closing the browser out from under Playwright also rejects one of Playwright's
+  own internal promises, which nothing awaited, so Node killed the export with an
+  *unhandled promise rejection* before the CLI's handler could run: no
+  `Export failed`, no summary, and an exit status unrelated to the export.
+  `index.js` now awaits the command's promise (`parseAsync`, not `parse`) and
+  reports a stray rejection like any other failure. Exit codes are unchanged:
+  `1` for a failed export.
+- **A notebook frame that OneNote replaces no longer kills the export**
+  (F-55). Not the cause of the above, but a real defect found while chasing it:
+  the exporter looked the notebook frame up once and then used that single
+  Playwright `Frame` object for the whole run, and a frame is not a durable
+  handle. OneNote re-creates its `onenoteframe.aspx` frame when the editor page
+  reloads, and the tab, its renderer or the browser can go away at any moment.
+  The export now holds the page and resolves the frame on demand: a replaced
+  frame is found again and the section walk continues, and a tab that is really
+  gone ends the run with a stated cause and an instruction instead of a
+  Playwright stack trace.
+- **"Timeout waiting for .sectionList" is only said when it really timed out**
+  (F-57). The wait reported *every* failure as a timeout, so a dead target
+  looked like a slow DOM — and the genuine 15s timeouts, which do
+  happen, became indistinguishable from it. The message now names the actual
+  cause.
+
+### Known issues — unchanged, but an export now reaches them
+
+With the browser no longer being closed underneath it, the export runs to
+completion for the first time since 12:17, and is now visibly slow on notebooks
+with attachments. One pre-existing defect there is confirmed against the live
+DOM (F-60): a single file attachment is scraped two or three times, because both
+`div.WACEFContainer[role="link"]` and the `span.WACEFOverlay` inside it match the
+attachment pattern, so the same PDF is downloaded repeatedly and written out as
+`file.pdf`, `file_1.pdf`, ... Per-attachment wall clock is now capped (see F-32
+above), so the wasted time is bounded, but the duplicate work is still done.
+
+Attachments that cannot be fetched are still reported per file and the page is
+still written, so this costs time and a few near-duplicate files rather than
+correctness.
+
 ## [0.2.0] - 2026-09-28
 
 A code-quality review of the whole tool (see `REVIEW-CODE.md`) found 53 issues.

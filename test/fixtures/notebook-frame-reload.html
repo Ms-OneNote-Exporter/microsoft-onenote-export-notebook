@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<!--
+  Fixture: the same notebook frame as notebook-frame.html, but hosted in an iframe
+  that is REPLACED part-way through the export.
+
+  This is the shape of a real OneNote editor: the notebook lives in
+  onenoteframe.aspx inside the SharePoint page, and OneNote re-creates that frame
+  when the page reloads (its URL carries newsession=1 and
+  wdredirectionreason=Force_SingleStepBoot for exactly that reason). The exporter
+  used to take the frame it found at the start and keep it, so a reload left it
+  holding a detached frame and the run died on the next DOM call.
+
+  The outer document deliberately has no .sectionList of its own, so the frame
+  finder has to descend into the iframe - and has to do it again after the swap.
+
+  Everything is inert and offline; see notebook-frame.html.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>notebook frame reload fixture</title>
+<style>
+  body { margin: 0; }
+  iframe { display: block; width: 1200px; height: 800px; border: 0; }
+</style>
+</head>
+<body>
+
+  <iframe id="notebook" src="notebook-frame.html" title="notebook"></iframe>
+
+  <script>
+    // Replaced on a timer rather than on a signal from the test, because the
+    // export runs for tens of seconds against this fixture and the interesting
+    // moment is "in the middle of a page being exported", not a fixed offset.
+    // 6s lands inside the section walk, after the frame has been used at least
+    // once and before the run is over.
+    setTimeout(function () {
+      var old = document.getElementById('notebook');
+      var fresh = document.createElement('iframe');
+      fresh.id = 'notebook';
+      fresh.title = 'notebook';
+      fresh.width = old.width;
+      fresh.height = old.height;
+      // A different query string, so the two frames are unmistakably different
+      // documents rather than a cached reload of the same one.
+      fresh.src = 'notebook-frame.html?session=2';
+      old.parentNode.replaceChild(fresh, old);
+    }, 6000);
+  </script>
+
+</body>
+</html>

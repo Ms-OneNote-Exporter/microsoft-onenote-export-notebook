@@ -6,6 +6,7 @@ const { createMarkdownConverter } = require('./parser');
 const { resolveInternalLinks } = require('./linkResolver');
 const { withRetry, permanent } = require('./utils/retry');
 const { classifyFetchTarget } = require('./utils/fetchHosts');
+const { createNotebookSession, NotebookUnavailableError } = require('./notebookFrame');
 const readline = require('readline');
 const fs = require('fs-extra');
 const path = require('path');
@@ -250,6 +251,11 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 logger.info('Will wait 3 seconds to let the frame load properly');
                 await contentFrame.waitForTimeout(3000);
             } catch (e) {
+                // A tab that is gone ends the whole walk. Catching it here would
+                // keep the loop going and produce one "Failed to process group"
+                // per remaining group, all repeating the same cause.
+                if (e instanceof NotebookUnavailableError) throw e;
+
                 stats.failedGroups++;
                 logger.error(`Failed to process group ${item.name}:`, e);
             }
@@ -260,6 +266,9 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         try {
             await selectSection(contentFrame, item.id);
         } catch (e) {
+            // See the group handler above: a dead tab is not one bad section.
+            if (e instanceof NotebookUnavailableError) throw e;
+
             stats.failedSections++;
             logger.error(`Failed to select section ${item.name}:`, e);
             continue;
@@ -498,6 +507,11 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 logger.success(`Saved (${savedResources} assets)`);
 
             } catch (e) {
+                // Ditto: without this, a tab that dies on page 12 of 40 fails
+                // pages 12-40 one by one, and the run takes minutes to give up on
+                // something that cannot recover.
+                if (e instanceof NotebookUnavailableError) throw e;
+
                 stats.failedPages++;
                 logger.error(`Failed to export ${pageInfo.name}:`, e);
             }
@@ -516,13 +530,24 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
  * @param {object} stats - Page/asset/failure counters
  * @param {{resolved: number, unresolved: number}} linkStats - Link resolution counts
  * @param {string} outputBase - Directory the notebook was written to
+ * @param {string|null} [stoppedFor] - Why the walk ended early, if it did
  */
-function reportSummary(stats, linkStats, outputBase) {
+function reportSummary(stats, linkStats, outputBase, stoppedFor = null) {
     const failures = stats.failedPages + stats.failedSections + stats.failedGroups;
 
-    if (failures === 0) {
+    if (failures === 0 && !stoppedFor) {
         logger.success('Export complete!');
-    } else {
+    }
+
+    if (stoppedFor) {
+        // Never "Export complete!" for a run that was cut short. The counters are
+        // there so a partial run cannot look like a clean one, and a tab that
+        // disappeared is the most partial a run can be.
+        logger.warn(`Export stopped early - ${stoppedFor}.`);
+        logger.warn('  The totals below are what was written; the rest of the notebook was not exported.');
+    }
+
+    if (failures > 0) {
         logger.warn(`Export finished with errors - ${failures} item(s) could not be exported.`);
         if (stats.failedGroups) logger.warn(`  Groups   failed: ${stats.failedGroups}`);
         if (stats.failedSections) logger.warn(`  Sections failed: ${stats.failedSections}`);
@@ -545,11 +570,14 @@ function reportSummary(stats, linkStats, outputBase) {
  * officeapps.live.com), identified by holding `.sectionList`. The frames are
  * probed in turn because several may be cross-origin or already detached.
  *
+ * Also handed to the notebook session as its lookup function, so a frame that
+ * OneNote replaces during a reload can be found again - see notebookFrame.js.
+ *
  * @param {import('playwright').Page} rootPage - Page whose frames to search
- * @param {object} options - Export options (honours `dodump`)
+ * @param {object} [options] - Export options (honours `dodump`)
  * @returns {Promise<import('playwright').Frame|null>} The content frame, or null
  */
-async function findContentFrame(rootPage, options) {
+async function findContentFrame(rootPage, options = {}) {
     const frames = rootPage.frames();
 
     for (const f of frames) {
@@ -629,9 +657,14 @@ function warnIfOutputExists(outputBase) {
  * @param {import('playwright').Frame} params.contentFrame - Frame holding the notebook
  * @param {string} params.notebookName - Used for the output directory name
  * @param {object} params.options - Export options
+ * @param {import('playwright').Page} [params.page] - Page hosting that frame, so a
+ *   frame OneNote replaces can be found again. Omitted only by tests, which hand in
+ *   a frame that stays put.
+ * @param {Function} [params.findFrame] - `(page) => Frame|null`, used to re-locate it
  * @returns {Promise<object>} Export statistics
+ * @throws {NotebookUnavailableError} If the editor tab goes away mid-export
  */
-async function exportContent({ contentFrame, notebookName, options }) {
+async function exportContent({ contentFrame, notebookName, options, page = null, findFrame = findContentFrame }) {
     const baseDir = options.exportDir || path.resolve(__dirname, '../output');
     const outputBase = path.resolve(baseDir, safeName(notebookName, 'Notebook'));
 
@@ -642,21 +675,56 @@ async function exportContent({ contentFrame, notebookName, options }) {
     await fs.ensureDir(outputBase);
     const td = createMarkdownConverter();
 
+    // Every Playwright call below goes through this handle rather than through the
+    // frame object that was found once, up front. That object expires: OneNote
+    // replaces its WOPI frame on a reload, and the tab or its renderer can die
+    // outright. Holding the page instead means a replaced frame is re-found and
+    // the walk continues, and a dead tab ends the run with a stated cause instead
+    // of a Playwright error raised from inside getSections().
+    const notebook = createNotebookSession({ page, frame: contentFrame, find: findFrame });
+
     logger.info('Scanning sections...');
     try {
-        await contentFrame.waitForSelector('.sectionList', { timeout: 15000 });
+        // Check the tab first: if the editor is already gone, say so here rather
+        // than letting the section-list wait report a dead tab as a slow DOM.
+        await notebook.frame();
+        await notebook.waitForSelector('.sectionList', { timeout: 15000 });
     } catch (e) {
-        logger.warn('Timeout waiting for .sectionList, trying to scrape anyway...');
+        if (e instanceof NotebookUnavailableError) throw e;
+
+        // Only a timeout means the DOM is slow. Anything else - a frame that went
+        // away mid-wait, say - has a different cause, and calling all of them a
+        // timeout sent the reader looking in the wrong place: a real 15s timeout
+        // and an instant failure of a closed tab produced the same line.
+        logger.warn(
+            e.name === 'TimeoutError'
+                ? 'Timeout waiting for .sectionList, trying to scrape anyway...'
+                : `Could not confirm the section list is rendered (${String(e.message).split('\n')[0]}) - trying to scrape anyway...`
+        );
     }
 
     const pageIdMap = {};
     const stats = newStats();
-    await processSections(contentFrame, outputBase, td, options, pageIdMap, new Set(), null, stats);
+
+    let stopped = null;
+    try {
+        await processSections(notebook, outputBase, td, options, pageIdMap, new Set(), null, stats);
+    } catch (e) {
+        if (!(e instanceof NotebookUnavailableError)) throw e;
+
+        // The walk stops, but the run still has to say what it managed to write:
+        // summarising and fixing up links is filesystem work, and someone whose
+        // tab died on page 12 of 40 needs to know those 12 are on disk. The error
+        // itself is re-thrown below, so the run still ends as a failure.
+        logger.warn('The OneNote editor tab went away, so the export stopped where it was.');
+        stopped = e;
+    }
 
     logger.info('Resolving internal links...');
     const linkStats = await resolveInternalLinks(pageIdMap, outputBase);
 
-    reportSummary(stats, linkStats, outputBase);
+    reportSummary(stats, linkStats, outputBase, stopped ? 'the OneNote editor tab went away' : null);
+    if (stopped) throw stopped;
     return stats;
 }
 
@@ -696,7 +764,29 @@ async function runExport(options = {}) {
                 logger.warn('Could not auto-detect content frame. Using main page as fallback...');
             }
 
-            return exportContent({ contentFrame, notebookName, options });
+            // The `await` is the fix, and it is not a stylistic choice.
+            //
+            // `return somePromise` inside a `try` that has a `finally` does NOT
+            // wait for that promise: the finally block runs the moment the return
+            // expression is evaluated, and only then is the returned value
+            // resolved. Writing `return exportContent(...)` therefore ran
+            // `browser.close()` *before the export had made a single DOM call* -
+            // which is exactly what happened on every run since 2807715 collapsed
+            // the two paths into this helper (2026-09-28, six runs in a row:
+            // `Found content frame` then, a second later, `Target page, context
+            // or browser has been closed` out of getSections, with the browser
+            // window sitting there fully rendered).
+            //
+            // Before that commit the tail was inlined and ended with `return
+            // stats` - a value, not a promise - so the finally ran at the right
+            // time and the same notebook exported all 19 pages at 12:17.
+            //
+            // Worth knowing: the project's own `no-return-await` rule does NOT
+            // flag this, because it exempts `return await` inside a
+            // try/finally for exactly this reason. So nothing in the toolchain
+            // objects here, and the only thing standing between this and the
+            // regression is a test - see test/runExportLifecycle.test.js.
+            return await exportContent({ contentFrame, notebookName, options, page: session.page });
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -773,10 +863,14 @@ async function runExport(options = {}) {
                 logger.warn('Could not auto-detect content frame. Using editor page as fallback...');
             }
 
-            return exportContent({
+            // `await` here for the same reason as in the --notebook-link branch:
+            // a bare `return` of the promise would run the finally - and so close
+            // the browser - before the export started. See the long comment there.
+            return await exportContent({
                 contentFrame,
                 notebookName: selectedNotebook.name,
                 options,
+                page: editorPage,
             });
         }
 

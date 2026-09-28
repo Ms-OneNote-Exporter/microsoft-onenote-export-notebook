@@ -466,6 +466,172 @@ Fixtures commit only structure: names, UUIDs, CSS-module hashes and tenant strin
 placeholders, and `test/scrapers.fixture.test.js` asserts that no tenant or account identifier
 survives, so a future raw capture pasted in unscrubbed fails the suite.
 
+### Phase 2d — A run that died on its first DOM call (2026-09-28)
+
+Six runs of
+
+```
+node src/index.js export --notebook "My Notebook" --auth-file … --notheadless --nopassasked
+```
+
+all reached the same line and all died a second later:
+
+```
+[SUCCESS] Found content frame (navigation): https://…/onenoteframe.aspx?…
+[INFO]    Scanning sections...
+[WARN]    Timeout waiting for .sectionList, trying to scrape anyway...
+frame.evaluate: Target page, context or browser has been closed
+    at getSections (src/scrapers.js:15:18)
+    at processSections (src/exporter.js:187:28)
+    at exportContent (src/exporter.js:654:11)
+```
+
+**F-58 (High, the actual cause) — the export closed its own browser before it started.**
+
+`runExport` ends with a `finally` that closes the browser. Returning a *promise*
+from inside a `try` that has a `finally` does not wait for it — the `finally`
+runs as soon as the return expression is evaluated:
+
+```js
+try { return doTheWork(); }       finally { await browser.close(); }  // close() runs FIRST
+try { return await doTheWork(); } finally { await browser.close(); }  // close() runs after
+```
+
+`runExport` ended with `return exportContent({ … })`, so every run killed the
+browser it was about to use, and a race decided whether the export got one
+section in before the browser went. Confirmed three ways, none of which required
+guessing:
+
+- the log ordering, with `--verbose`: `Found content frame` → `Closing browser…`
+  → `Scanning sections…`, i.e. the `finally` ran *between* finding the frame and
+  the first DOM call;
+- a five-line script reproducing the semantics above;
+- the timestamp arithmetic: the `[WARN] Timeout waiting for .sectionList` is
+  stamped the same second as `Scanning sections...` and the wait allows 15s,
+  while the suite's real timeouts take the full 15s. A `waitForSelector` against
+  a closed target fails *instantly*, which is why the "timeout" was instant.
+
+**When it arrived.** The last good run was 12:17 (19 pages). The regression is
+`2807715` at 13:34, "collapse the duplicated half of runExport into one shared
+path". Before it, the click path had the tail inlined and ended with `return
+stats` — a *value*, so the `finally` ran at the right time. The extraction turned
+that into `return exportContent(…)`, and the commit's own test could not see it:
+`exportContent` is tested directly, never through `runExport`, so nothing ever
+exercised the `finally`. That is the same class of blind spot as the drift the
+commit was fixing, in the opposite direction — and the lesson for the next
+extraction here is that a `return` at the end of a `try` is part of the function's
+contract, not a detail of the code being moved.
+
+Nothing in the toolchain objects, which is why it survived five runs:
+`no-return-await` is enabled in `eslint.config.js`, and it deliberately **exempts**
+`return await` inside a `try`/`finally` (verified against the installed ESLint
+9.39.5, not assumed), so both forms lint clean. I had assumed the opposite and
+written that claim into a comment and the CHANGELOG before checking; the test is
+the only guard that actually works here.
+
+**F-56 (High) — the failure was reported as a Node crash.** Closing the browser
+rejects one of Playwright's own internal promises, which nothing awaited, so Node
+killed the process with an unhandled rejection before the CLI's handler could
+run: no `Export failed` in the log, no summary, and an exit status unrelated to
+the export. Reproduced with a real browser: closing a *page* does not produce it,
+closing the *context* does. `program.parse()` also returns a promise the CLI
+discarded, so any rejection from the command could escape the same way.
+
+### What I got wrong first, and what corrected it
+
+I first read this as the browser or the tab dying, and wrote that up — the log
+showed no crash report, so the honest position at the time was "a closed or
+crashed target, cause unknown", and `notebookFrame.js` was built to make that
+survivable rather than to prevent it.
+
+**A screenshot of the user's browser at the moment of the failure disproved it.**
+The editor tab was open, fully rendered, showing the notebook: section list,
+page list, page content. `Target page, context or browser has been closed` is not
+something a live, working tab can be asked for. A `--dodump` capture agreed — a
+929 KB frame with the complete section list, written one second *before* the
+failure. So the target was not dying, and a "crashed renderer" reading (which I
+had also floated, and which no macOS crash report supports) was wrong too.
+
+I then added a diagnostic that reads the target's state at the moment of failure
+and re-ran it against the real notebook:
+
+```
+[DEBUG] waitForSelector() failed (frame.waitForSelector: Target page, context or browser has been closed)
+[DEBUG] OneNote target state at failure: death=closed pageClosed=true contextPages=0 openPages=[] frameDetached=no frame
+```
+
+`contextPages=0` — not one page left in the context, including the notebook list
+page that nothing had closed. That is a closed *browser*, and the only thing in
+this codebase that closes one is that `finally`. The screenshot is what turned
+"a plausible story" into "no, the tool did this", and it is the reason the fix
+below is `return await` rather than anything about frames.
+
+**Kept anyway, because both are real defects this hunt exposed** (not causes of
+it):
+
+- **F-55 (High)** — the export pinned one `Frame` object for the whole run. A
+  Playwright frame is not a durable handle: OneNote re-creates its
+  `onenoteframe.aspx` frame on a reload (`newsession=1`,
+  `wdredirectionreason=Force_SingleStepBoot` are in that URL for this reason),
+  and a tab or renderer can go at any moment. `notebookFrame.js` now holds the
+  page and resolves the frame per call, re-finding a replaced one and reporting a
+  dead tab with its cause. A browser test swaps the notebook iframe mid-export
+  and asserts the export still finishes; it fails in 67 ms without the change.
+- **F-57 (Medium)** — the `.sectionList` wait reported every failure as a
+  timeout, which is what sent me looking for a slow DOM instead of a closed
+  browser.
+
+The lesson is the one Phase 2b and 2c keep earning: a log line is not a cause.
+The cost of this one was a fix aimed at the wrong layer, written with more
+confidence than the evidence supported — corrected above rather than quietly
+replaced, because "I was wrong and here is what showed me" is the part worth
+keeping.
+
+### The same mistake again, one layer down (the download dialog)
+
+With F-58 fixed the export ran, and it then appeared to hang on OneNote's
+"Download File" confirmation: the modal open on screen, `Will wait 2 seconds to
+let the confirmation dialog load.` logged on every attempt, and neither
+`Found confirmation button on page` nor `…in frame` ever printed. I wrote that
+up as **F-59, a pre-existing product defect**, on the strength of a live
+diagnosis: 6 attempts, 0 selector matches, a modal that blocked the page.
+
+It was not a product defect. It was **F-58's own session proxy**, which wrapped
+every method in a promise:
+
+```js
+contentFrame.locator(sel).filter({ visible: true }).first()
+//   → TypeError: locator(...).filter is not a function
+```
+
+A promise has no `.filter`. The exception was thrown inside a `catch` that
+discarded it, so the confirmation was never clicked, the modal stayed, and the
+export crawled — a self-inflicted bug presenting with the exact signature of the
+one I had just spent the day fixing. Two things had to be true for this to be so
+misleading, and both are now fixed:
+
+- **the silent catch is gone.** It logged nothing, so the one line that would
+  have said `locator(...).filter is not a function` never reached the log. This
+  is the same defect class as F-04/F-34, and `no-empty` does not catch a catch
+  with a comment in it.
+- **the diagnosis was tested against the old code instead of argued about.** One
+  run of the same call with a raw `Frame` settled it in three seconds —
+  `Found confirmation button in frame, clicking...` → `Downloaded via Strategy:
+  UI Click`, 324 KB. Everything I had written about OneNote's dialog was wrong:
+  the button is `#DialogActionButton` in the OneNote frame, it appears in 690ms,
+  the existing English selector matches it, and it works.
+
+What I should have done at the first "0 matches" was to print the exception
+instead of writing a paragraph about it. The cost of not doing that was a
+finding, a CHANGELOG entry and a README section describing a defect in the
+product that did not exist — all of it now removed, and the time budget (F-32)
+that came out of it kept.
+
+`NotebookSession` now passes through the methods whose result callers chain off
+(`locator`, `$`, `getBy*`, …) as the real Playwright object, and only routes
+awaited calls through the retrying path. `test/notebookFrame.test.js` uses the
+exact call shape from `downloadStrategies.js`, so it cannot come back quietly.
+
 
 - Map the duplicated `--notebook-link` vs `--notebook` flow in `runExport`
   (`exporter.js:364-423` vs `426-537`).
@@ -555,7 +721,9 @@ that real tests exist.
 ## 7. Findings register
 
 **50 findings: 1 Critical, 8 High, 24 Medium, 17 Low/Info.** Full evidence for each is in
-the Phase 2 section above; this table is the index and the fix ladder.
+the Phase 2 section above; this table is the index and the fix ladder. Four more
+(F-55, F-56, F-57, F-58) came out of a real run and are written up in Phase 2d,
+which also records the diagnosis I got wrong first.
 
 | ID | Sev | Area | One-line summary | Status |
 |----|-----|------|------------------|--------|
@@ -579,7 +747,9 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-02 | Medium | `scrapers.js:1` | **Corrected:** unused `logger` import ⇒ 4 `console.*` calls bypass `logs/app.log`. Those calls are inside browser-context `evaluate()` callbacks, so the logger is not available there. | partially fixed `a306c9d` |
 | F-21 | Low | `exporter.js:122` | ~~`navigateBack` failure ignored ⇒ traversal continues against the wrong tree~~ — **disproved by a real run**; the throw I added broke the export. Reverted `4e8d065`. | reverted |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | **fixed** `d878ceb` |
-| F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | **partly fixed** `b77417f` (permanent failures no longer retried; per-attachment time budget still open) |
+| F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | **fixed** — `withRetry` gained `maxElapsedMs`; an attachment is capped at 30s of wall clock, which the strategy that actually works (4s) fits inside |
+| F-60 | Medium | `scrapers.js:425` | One file attachment is scraped 2–3 times: a `div.WACEFContainer[role=link]` and the `span.WACEFOverlay` inside it both match, so the same PDF is downloaded repeatedly and lands as `file.pdf`, `file_1.pdf`, … **Confirmed live** (`Section1-Note1.1_PDFs` produced 3 entries for 1 file) | open — the two candidates need collapsing to one, and which one is clickable is not obvious from the DOM |
+
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | **fixed** — `--verbose`/`--quiet` + `ONENOTE_EXPORT_LOG_LEVEL`, default hides debug; rotates at 5 MB |
@@ -601,6 +771,10 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-16 | Medium | `exporter.js` | Re-runs duplicated assets instead of refreshing them | **fixed by decision** — overwrite by default, with a warning naming the folder and stating what will be overwritten |
 | F-18, F-19, F-27, F-28, F-35, F-43, F-49 | Low/Info | various | Remaining polish: unused `content.title`, blank-line prefix when there is no date outline, image `alt` text, table header assumption, per-strategy download stats, diagnose-script arg parsing, image extension validation | open |
 | F-38 | Low | `logger.js:25-31` | Timestamp omitted the year and timezone; `dumpSubDir` has minute granularity | **partly fixed** — ISO date + UTC offset added; dump-dir granularity unchanged |
+| F-55 | High | `exporter.js:552,634` | One `Frame` object was pinned for the whole export, so a frame OneNote re-creates — or a tab/renderer that dies — ended the run at the next DOM call | **fixed** — `notebookFrame.js`: hold the page, resolve the frame per call, recover or report. *Found while chasing F-58; not its cause* |
+| F-56 | **High** | `index.js:61` | A closed target makes Playwright reject an internal promise; Node killed the export with an unhandled rejection before the CLI's own handler ran | **fixed** — `parseAsync()` + an `unhandledRejection` handler; browser now closes, exit code is `1` |
+| F-57 | Medium | `exporter.js:647` | The `.sectionList` wait reported every failure as "Timeout", including an instantly-failing dead target | **fixed** — only a `TimeoutError` is called a timeout; anything else names its cause |
+| F-58 | **High** | `exporter.js:767,845` | `return exportContent(…)` inside `try { … } finally { browser.close() }` — the `finally` ran immediately, so the export closed its own browser before the first DOM call. Regression from `2807715` | **fixed** — `return await` in both paths, with the reason, an eslint-disable, and an ordering test |
 
 Severity scale: **Critical** = silent data loss / false success / security ·
 **High** = wrong output or hangs · **Medium** = maintainability, perf, portability ·

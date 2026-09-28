@@ -40,6 +40,8 @@ function isPermanent(error) {
  * @param {number} options.backoffMultiplier - Backoff multiplier (default: 2)
  * @param {string} options.operationName - Name of operation for logging (default: 'Operation')
  * @param {boolean} options.silent - Suppress retry logging (default: false)
+ * @param {number} options.maxElapsedMs - Give up once this much wall-clock has
+ *   passed, instead of after a fixed number of attempts (default: no limit)
  * @returns {Promise<any>} Result of the function
  * @throws {Error} If all attempts fail, or immediately if the error is permanent
  */
@@ -50,9 +52,11 @@ async function withRetry(fn, options = {}) {
         maxDelayMs = 5000,
         backoffMultiplier = 2,
         operationName = 'Operation',
-        silent = false
+        silent = false,
+        maxElapsedMs = Infinity
     } = options;
 
+    const startedAt = Date.now();
     let lastError;
     let delayMs = initialDelayMs;
 
@@ -77,6 +81,24 @@ async function withRetry(fn, options = {}) {
             if (attempt === maxAttempts) {
                 if (!silent) {
                     logger.error(`${operationName} failed after ${maxAttempts} attempts:`, error);
+                }
+                throw error;
+            }
+
+            // An attempt is not free. The operation may be a 15 second round trip
+            // to a cloud service, so a count of attempts says nothing about how
+            // long the work takes - and on a real notebook, minutes per file is
+            // the difference between an export that finishes and one that looks
+            // hung. The remaining time is checked before paying the backoff: an
+            // attempt that cannot even start in time is not worth starting.
+            const elapsedMs = Date.now() - startedAt;
+            if (elapsedMs + delayMs >= maxElapsedMs) {
+                if (!silent) {
+                    logger.warn(
+                        `${operationName} gave up on attempt ${attempt} of ${maxAttempts} ` +
+                        `after ${Math.round(elapsedMs / 1000)}s: no room left in the ` +
+                        `${Math.round(maxElapsedMs / 1000)}s budget for another try.`
+                    );
                 }
                 throw error;
             }
