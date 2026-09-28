@@ -146,8 +146,13 @@ async function handleOfficeOnlineDownload(page, outputPath) {
             finalDownloadItem = target.locator('button:has-text("Download"), a:has-text("Download"), button:has-text("Télécharger"), a:has-text("Télécharger")').first();
         }
 
-        // Start waiting for download before clicking
+        // Start waiting for download before clicking. The promise is marked handled
+        // immediately: anything between here and the `await` below can throw (the
+        // item may never become visible, or the click may fail), and if that
+        // happens nothing awaits this promise, so its 45s timeout would surface
+        // later as an unhandled rejection. Awaiting it still observes rejection.
         const downloadPromise = page.waitForEvent('download', { timeout: 45000 });
+        downloadPromise.catch(() => { });
 
         await finalDownloadItem.waitFor({ state: 'visible', timeout: 10000 });
         await finalDownloadItem.click({ force: true });

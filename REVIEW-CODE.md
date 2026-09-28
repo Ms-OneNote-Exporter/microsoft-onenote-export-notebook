@@ -563,7 +563,11 @@ the Phase 2 section above; this table is the index and the fix ladder.
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | open |
 | F-23 | Medium | `scrapers.js:302` | 20+ untestable inline heuristics; extension regex duplicated 3× | open |
 | F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11 | Low/Info | various | Dead code, empty catches, `no-cond-assign`, unused params, useless escapes | **fixed** `a306c9d` |
-| F-13, F-16, F-18, F-19, F-27, F-28, F-34, F-35, F-39, F-41, F-43, F-49, F-50 | Low/Info | various | Polish, doc drift, latent fragility | open |
+| F-41 | Low | `config.js:11,17` | `USER_DATA_DIR` exported, never imported | **fixed** — dead export removed |
+| F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | **fixed** — marked handled at creation, awaited later |
+| F-39 | Low | `retry.js:56` | Unreachable trailing `throw lastError` | **fixed** — now rejects instead of resolving `undefined` when `maxAttempts <= 0` |
+| F-50 | Low | `README.md` | Project Structure named a non-existent root, omitted half the repo | **fixed** — rewritten, with a test that keeps it honest |
+| F-13, F-16, F-18, F-19, F-27, F-28, F-35, F-43, F-49 | Low/Info | various | Remaining polish: duplicate `runExport` flow (F-13 context), re-run asset duplication (F-16, needs a policy decision), image `alt` text, table header assumption, per-strategy download stats, diagnose-script arg parsing, image extension validation | open |
 | F-38 | Low | `logger.js:25-31` | Timestamp omitted the year and timezone; `dumpSubDir` has minute granularity | **partly fixed** — ISO date + UTC offset added; dump-dir granularity unchanged |
 
 Severity scale: **Critical** = silent data loss / false success / security ·

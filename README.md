@@ -90,6 +90,8 @@ node src/index.js export \
 | `--dodump` | Dump raw HTML content to `logs/dumps/` for debugging |
 | `--nopassasked` | Skip password-protected sections instead of pausing to ask |
 | `--non-interactive` | Run unattended (containers/CI). Requires `--notebook` or `--notebook-link`, and implies `--nopassasked` |
+| `-v, --verbose` | Show debug output (off by default) |
+| `-q, --quiet` | Only show warnings and errors |
 
 ## Unattended / container use
 
@@ -159,25 +161,78 @@ node src/index.js export \
 ## Project Structure
 
 ```
-microsoft-onenote-export-notebook-playwright-js/
+microsoft-onenote-export-notebook/
 ├── src/
-│   ├── index.js              # CLI entry point
-│   ├── auth-context.js       # Auth context loader (file-based)
-│   ├── config.js             # Configuration (paths, URLs)
+│   ├── index.js              # CLI entry point (commander)
+│   ├── auth-context.js       # Auth context loader + storageState validation
+│   ├── config.js             # Configuration (OneNote URL)
 │   ├── navigator.js          # Browser navigation (list & open notebooks)
 │   ├── exporter.js           # Main export logic (section/page traversal)
 │   ├── scrapers.js           # DOM scraping (sections, pages, content)
 │   ├── parser.js             # HTML → Markdown converter (Turndown)
 │   ├── linkResolver.js       # Internal link resolution for Obsidian
 │   ├── downloadStrategies.js # Attachment download strategies
+│   ├── diagnose-notebook.js        # Selector diagnostics (dev tool)
+│   ├── diagnose-notebook-newpage.js # Popup/redirect diagnostics (dev tool)
 │   └── utils/
-│       ├── logger.js         # Coloured logging + file logger
-│       └── retry.js          # Exponential backoff retry helper
+│       ├── logger.js         # Levelled logging + file logger
+│       ├── logPaths.js       # Where logs live (checkout vs global install)
+│       ├── fetchHosts.js     # Classification of asset fetch hosts
+│       ├── naming.js         # File/dir name sanitising and de-duplication
+│       └── retry.js          # Exponential backoff, with permanent-failure support
+├── test/                     # Jest suite (`npm test`)
+├── .github/workflows/ci.yml  # lint + test + CLI smoke test
+├── Dockerfile                # Container image (builds from this working tree)
+├── entrypoint.sh             # Container entry point
+├── start-container.sh        # Helper to run the container
+├── dumps/                    # Raw DOM captures used to build fixtures (gitignored)
 ├── output/                   # Exported notebooks (gitignored)
 ├── logs/                     # Log files and HTML dumps (gitignored)
+├── CHANGELOG.md
 ├── package.json
 └── README.md
 ```
+
+The two `diagnose-*` scripts are developer tools for working out which CSS
+selectors the current OneNote web UI uses. They are not needed to export
+anything, but they are the first thing to run when a selector breaks.
+
+## Logs
+
+Log output goes to `logs/app.log` in a checkout. After a global install it goes
+to `~/.local/state/microsoft-onenote-export-notebook/` (honouring
+`XDG_STATE_HOME`), because writing inside `node_modules` is unreliable and gets
+wiped on reinstall. Override either with `ONENOTE_EXPORT_LOG_DIR`.
+
+Logs and `--dodump` HTML dumps are created owner-only (`0600`/`0700`): a dump
+contains the authenticated DOM of a real notebook, including cookies and tenant
+hostnames. Treat `logs/dumps/` as sensitive and do not commit it.
+
+### Verbosity
+
+Debug output is **off by default** — it used to be unconditional and buried the
+useful output.
+
+```bash
+onenote-export-nb export --auth-file auth.json --notebook "X" --verbose   # add debug
+onenote-export-nb export --auth-file auth.json --notebook "X" --quiet     # warnings and errors only
+ONENOTE_EXPORT_LOG_LEVEL=debug onenote-export-nb export …                 # for containers
+```
+
+`app.log` rotates to `app.log.1` once it passes 5 MB.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Export completed |
+| `1` | Export failed (bad auth file, notebook not found, browser error, …) |
+| `2` | Usage error — for example `--non-interactive` without `--notebook` |
+
+Note the asymmetry with the container: `entrypoint.sh` deliberately **exits `0`
+even when the export fails**, so a partial export is kept rather than discarded.
+The CLI itself always reports the truth.
+
 
 ## License
 
