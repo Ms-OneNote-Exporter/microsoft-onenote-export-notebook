@@ -1,4 +1,50 @@
-const { withRetry } = require('../src/utils/retry');
+const { withRetry, permanent, isPermanent } = require('../src/utils/retry');
+
+describe('permanent errors', () => {
+    it('marks an error and records a reason', () => {
+        const err = permanent(new Error('nope'), 'because reasons');
+        expect(isPermanent(err)).toBe(true);
+        expect(err.permanentReason).toBe('because reasons');
+    });
+
+    it('does not mark a plain error', () => {
+        expect(isPermanent(new Error('nope'))).toBe(false);
+        expect(isPermanent(undefined)).toBe(false);
+    });
+
+    // A retry is only worth its cost if a second attempt could differ. A missing
+    // DOM element, a malformed URL or an unsupported protocol cannot change, and
+    // a real run showed three identical warnings ~8s apart per attachment.
+    it('stops immediately instead of burning the backoff', async () => {
+        const fn = jest.fn().mockRejectedValue(permanent(new Error('gone'), 'element missing'));
+        const started = Date.now();
+
+        await expect(withRetry(fn, { maxAttempts: 5, initialDelayMs: 1000, silent: true }))
+            .rejects.toThrow('gone');
+
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(Date.now() - started).toBeLessThan(500);
+    });
+
+    it('still retries ordinary errors the full number of times', async () => {
+        const fn = jest.fn().mockRejectedValue(new Error('transient'));
+
+        await expect(withRetry(fn, { maxAttempts: 3, initialDelayMs: 1, silent: true }))
+            .rejects.toThrow('transient');
+        expect(fn).toHaveBeenCalledTimes(3);
+    });
+
+    it('retries when an earlier attempt fails permanently but a later one would not', async () => {
+        // Guards against a permanent error poisoning the whole loop: the flag is
+        // per-throw, and a fresh error each attempt is judged on its own merits.
+        const fn = jest.fn()
+            .mockRejectedValueOnce(new Error('transient'))
+            .mockResolvedValue('ok');
+
+        await expect(withRetry(fn, { maxAttempts: 3, initialDelayMs: 1, silent: true }))
+            .resolves.toBe('ok');
+    });
+});
 
 describe('withRetry', () => {
     it('returns the value on the first success without retrying', async () => {

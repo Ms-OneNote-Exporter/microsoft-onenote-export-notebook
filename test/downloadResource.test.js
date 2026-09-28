@@ -53,7 +53,6 @@ describe('downloadResource', () => {
             page = await context.newPage();
         } catch (e) {
             online = false;
-            // eslint-disable-next-line no-console
             console.warn(`Skipping downloadResource tests: Chromium unavailable (${e.message.split('\n')[0]})`);
         }
     }, 60000);

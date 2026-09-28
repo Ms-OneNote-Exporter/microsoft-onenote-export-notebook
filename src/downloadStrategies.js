@@ -1,7 +1,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const Logger = require('./utils/logger');
-const { withRetry } = require('./utils/retry');
+const { withRetry, permanent } = require('./utils/retry');
 
 /**
  * Strategy 1: URL Transformation (Direct Download)
@@ -229,8 +229,12 @@ async function tryUIClick(contentFrame, attachId, outputPath) {
     // Wait for the element to be present
     const link = await contentFrame.waitForSelector(selector, { state: 'attached', timeout: 5000 }).catch(() => null);
     if (!link) {
+        // Reported as a permanent condition by the caller: nothing re-navigates or
+        // re-renders between retry attempts, so if the marker is not in the DOM
+        // now it will not be on the next try either. A real run showed three
+        // identical warnings ~8s apart per attachment for exactly this case.
         Logger.warn(`      [Strategy: UI Click] Could not find clickable element for ${attachId}`);
-        return false;
+        return { ok: false, elementMissing: true };
     }
 
     Logger.info(`      [Strategy: UI Click] Triggering double click and waiting for download event...`);
@@ -280,7 +284,7 @@ async function tryUIClick(contentFrame, attachId, outputPath) {
 
         if (result.type === 'download') {
             await result.value.saveAs(outputPath);
-            return true;
+            return { ok: true, elementMissing: false };
         } else if (result.type === 'popup') {
             const popup = result.value;
             const popupUrl = popup.url();
@@ -302,7 +306,7 @@ async function tryUIClick(contentFrame, attachId, outputPath) {
                     ]);
                     await download.saveAs(outputPath);
                     await popup.close().catch(() => null);
-                    return true;
+                    return { ok: true, elementMissing: false };
                 } catch (e) {
                     await popup.close().catch(() => null);
                 }
@@ -313,7 +317,8 @@ async function tryUIClick(contentFrame, attachId, outputPath) {
     } catch (e) {
         Logger.debug(`      UI click strategy failed for ${attachId}: ${e.message}`);
     }
-    return false;
+    // The element existed and was clicked, so this failure is worth retrying.
+    return { ok: false, elementMissing: false };
 }
 
 /**
@@ -331,7 +336,8 @@ async function downloadAttachment(contentFrame, info, outputPath) {
         }
 
         // 2. Try UI click
-        if (await tryUIClick(contentFrame, info.id, outputPath)) {
+        const uiResult = await tryUIClick(contentFrame, info.id, outputPath);
+        if (uiResult.ok) {
             Logger.success(`      [Success] Downloaded via Strategy: UI Click`);
             return true;
         }
@@ -354,7 +360,18 @@ async function downloadAttachment(contentFrame, info, outputPath) {
             }
         }
 
-        throw new Error(`All download strategies failed for ${info.originalName}`);
+        const error = new Error(`All download strategies failed for ${info.originalName}`);
+
+        // A missing clickable element is the one case where retrying is provably
+        // pointless: no re-navigation or re-render happens between attempts, and
+        // both other strategies do not depend on that element. Everything else
+        // keeps the full retry budget, which the log shows is load-bearing for
+        // the attachments that do succeed.
+        if (uiResult.elementMissing) {
+            throw permanent(error, 'clickable element never appeared in the DOM');
+        }
+
+        throw error;
     }, {
         maxAttempts: 3,
         initialDelayMs: 2000, // Longer delay for SharePoint redirects

@@ -4,7 +4,7 @@ const { listNotebooks, openNotebook, openNotebookByLink } = require('./navigator
 const { getSections, getPages, selectSection, selectPage, getPageContent, navigateBack, isSectionLocked } = require('./scrapers');
 const { createMarkdownConverter } = require('./parser');
 const { resolveInternalLinks } = require('./linkResolver');
-const { withRetry } = require('./utils/retry');
+const { withRetry, permanent } = require('./utils/retry');
 const readline = require('readline');
 const fs = require('fs-extra');
 const path = require('path');
@@ -63,7 +63,22 @@ async function downloadResource(page, url, outputPath, options = {}) {
             }
             // Not a base64 data URL. Decoding it as base64 would silently write
             // garbage, so fail loudly instead of producing a corrupt asset.
-            throw new Error(`Unsupported data: URL (not base64): ${url.substring(0, 60)}…`);
+            // Retrying cannot change a malformed URL, so mark it permanent.
+            throw permanent(
+                new Error(`Unsupported data: URL (not base64): ${url.substring(0, 60)}…`),
+                'malformed data: URL'
+            );
+        }
+
+        // The request context speaks http/https only. blob: is handled below;
+        // every other scheme (about:, ftp:, mailto:, a bare relative path) fails
+        // identically on each attempt and used to burn the whole backoff.
+        if (!/^https?:/i.test(url) && !url.startsWith('blob:')) {
+            const protocol = (url.match(/^([a-z][a-z0-9+.-]*):/i) || [, 'none'])[1];
+            throw permanent(
+                new Error(`Unsupported URL protocol "${protocol}:": ${url.substring(0, 60)}…`),
+                `unsupported protocol ${protocol}:`
+            );
         }
 
         if (url.startsWith('blob:')) {
