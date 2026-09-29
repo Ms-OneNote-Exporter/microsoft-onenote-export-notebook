@@ -4,7 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-09-29
+
+A **minor** bump, not a patch, because of one entry below: a run that completes
+with pages missing now exits `3`, which is new observable behaviour. Anything
+keying on `== 0` will start reporting failure, and that is the intended effect
+rather than a defect — but it is not a change a patch release should carry
+quietly.
+
+Everything here was found by exporting a real notebook and comparing the result
+against a known-good run, then comparing runs against each other.
 
 ### Added
 
@@ -77,7 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produced, and the one that survived the F-61/F-63 work.
 
 ## [0.2.2] - 2026-09-29
-
 Four fixes with one theme: **the export was writing wrong or missing data and
 reporting success.** Every one was found by running the export against a real
 notebook and comparing the result against a known-good run rather than by
@@ -512,6 +520,7 @@ Recorded in `REVIEW-CODE.md` with severity and evidence. The most relevant:
   a global install.
 - `--dodump` writes authenticated DOM to `logs/dumps` at mode 0644.
 
+[0.3.0]: https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/compare/v0.1.1...v0.2.0
