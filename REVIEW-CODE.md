@@ -796,7 +796,7 @@ which also records the diagnosis I got wrong first.
 | F-26 | Medium | `parser.js:41` | Text-less internal links become `[[]]` → `[[path|]]` | **fixed** `a306c9d` |
 | F-30 | Medium | `linkResolver.js:81` | Windows `\` separators break Obsidian wikilinks | **fixed** `a306c9d` |
 | F-31 | Low | `linkResolver.js:10` | Resolver returns `void`; unresolved links are invisible | **fixed** `a306c9d` |
-| F-02 | Medium | `scrapers.js:1` | **Corrected:** unused `logger` import ⇒ 4 `console.*` calls bypass `logs/app.log`. Those calls are inside browser-context `evaluate()` callbacks, so the logger is not available there. | partially fixed `a306c9d` |
+| F-02 | Medium | `scrapers.js` | **Corrected, then fixed.** The original finding said "route the 4 `console.*` calls through the logger", which would have been a runtime bug: they sit inside browser-context `evaluate()` callbacks where a Node module is not in scope. The real defect was the destination — a browser console nobody has open | **fixed** — the diagnostics are collected in the page and **returned**, then logged on the Node side, with each message's level preserved. The `FAILED to match real element` line is a warning because it predicts a download that cannot succeed, and it now reaches `logs/app.log` |
 | F-21 | Low | `exporter.js:122` | ~~`navigateBack` failure ignored ⇒ traversal continues against the wrong tree~~ — **disproved by a real run**; the throw I added broke the export. Reverted `4e8d065`. | reverted |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | **fixed** `d878ceb` |
 | F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | **fixed** — `withRetry` gained `maxElapsedMs`; an attachment is capped at 30s of wall clock, which the strategy that actually works (4s) fits inside. **The evidence half is now fixed too:** `utils/strategyStats.js` counts attempts *and* wins per strategy and the summary prints `wins/attempts`, so "Direct entered 40 times, won 0" is now visible — which is what reordering or dropping the ~72s Office Online path needs |
@@ -935,7 +935,7 @@ are the authority, and the §8a "next session" list below is the part that needs
 
 | Sev | Findings |
 |-----|----------|
-| Medium | F-23 (attachment heuristics untestable, `fileExtRegex` twice) · F-33 residual (account-driven UI language) · F-02 (scraper diagnostics cannot reach `app.log`) |
+| Medium | F-23 (attachment heuristics untestable, `fileExtRegex` twice) · F-33 residual (account-driven UI language) |
 | Low/Info | F-18, F-19, F-27, F-28, F-35, F-38 residual, F-43, F-49, F-54 · plus the untriaged §6 items: `processSections`' 8 positional parameters and mutable default `stats`, `openNotebook`'s leaked listing page, the download popups that leak on the error path, `linkResolver`'s case-folding and second full read/write pass, and 15 remaining fixed sleeps |
 
 ### Lesson worth keeping (from F-21)

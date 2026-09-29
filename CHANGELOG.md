@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scraper diagnostics now reach `logs/app.log`.** The attachment heuristics run
+  inside a callback that Playwright serialises and executes in the browser, where
+  a Node module is not in scope, so they logged to the browser console. During an
+  unattended run nobody is looking at that. The line that mattered most was
+
+  ```
+  [Scraper] FAILED to match real element for file_0. UI Click strategy will fail.
+  ```
+
+  which says, at scrape time, that a specific attachment can never be downloaded —
+  the explanation for a download failure, printed where nobody would find it.
+
+  They are now collected in the page, returned with the scrape result, and logged
+  on the Node side. Levels are preserved rather than flattened: that failure stays
+  a **warning**, because burying it under the twenty debug lines around it would
+  lose it again.
+
+  Nothing else about the scrape changes. `--verbose` shows the debug lines, and
+  they are in the log either way.
+
+  This does **not** mean the logger can now be called from inside those
+  callbacks — it cannot, and doing so throws `logger is not defined` and kills the
+  page extraction. The pattern is: collect strings in the page, return them, log
+  them on the Node side.
+
 ### Added
 
 - **The export summary now reports which download strategy fetched each
