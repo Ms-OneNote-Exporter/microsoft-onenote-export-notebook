@@ -1,5 +1,5 @@
 const logger = require('./utils/logger');
-const { getAuthenticatedContextWithFile } = require('./auth-context');
+const { getAuthenticatedContextWithFile, logBrowserLocale } = require('./auth-context');
 const { ONENOTE_URL } = require('./config');
 const fs = require('fs-extra');
 const path = require('path');
@@ -85,6 +85,9 @@ async function listNotebooks(options = {}) {
 
     try {
         const page = await context.newPage();
+        // navigator.language is a browser-level property: this costs nothing and
+        // does not depend on the page having loaded.
+        await logBrowserLocale(page);
 
         logger.info(`Navigating to notebooks list: ${ONENOTE_URL}`);
         await page.goto(ONENOTE_URL);
@@ -322,6 +325,7 @@ async function openNotebookByLink(options = {}) {
 
     try {
         const page = await context.newPage();
+        await logBrowserLocale(page);
 
         logger.info('Navigating to notebook URL...');
         await page.goto(url);

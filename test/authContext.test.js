@@ -18,7 +18,7 @@ jest.mock('playwright', () => ({
 }));
 
 const { chromium } = require('playwright');
-const { getAuthenticatedContextWithFile, readStorageState } = require('../src/auth-context');
+const { getAuthenticatedContextWithFile, readStorageState, buildContextOptions, logBrowserLocale, EXPORT_LOCALE } = require('../src/auth-context');
 
 jest.mock('../src/utils/logger', () => ({
     warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn(),
@@ -186,5 +186,74 @@ describe('getAuthenticatedContextWithFile', () => {
         if (process.platform === 'win32') return;
         const file = track(writeAuth(VALID, { mode: 0o666 }));
         await expect(getAuthenticatedContextWithFile(file)).resolves.toBeDefined();
+    });
+});
+
+/**
+ * F-33: the Office Online download menu is selected by UI text that exists in
+ * English and French only. Playwright's `locale` defaults to the *system* locale,
+ * so the same tool could work on one machine and fail on another with nothing in
+ * the log to say why.
+ */
+describe('pinned browser locale', () => {
+    beforeEach(() => {
+        logger.info.mockReset();
+        logger.debug.mockReset();
+    });
+
+    it('requests en-US', () => {
+        expect(buildContextOptions('/x/auth.json').locale).toBe('en-US');
+    });
+
+    // The non-obvious half. Playwright turns `locale` into an Accept-Language
+    // header for *browser* requests, but context.request - which downloads the
+    // files - is a different client: BrowserContextAPIRequestContext copies
+    // userAgent, extraHTTPHeaders, proxy and baseURL into its defaults and omits
+    // locale. Only extraHTTPHeaders reaches it, so the header has to be set
+    // explicitly or the downloads go out with no language at all.
+    it('also sets Accept-Language in extraHTTPHeaders, where context.request inherits it', () => {
+        const headers = buildContextOptions('/x/auth.json').extraHTTPHeaders;
+        expect(headers['Accept-Language']).toMatch(/^en-US/);
+    });
+
+    it('keeps the storageState it was given', () => {
+        expect(buildContextOptions('/x/auth.json').storageState).toBe('/x/auth.json');
+    });
+
+    it('hands the pinned options to newContext', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-'));
+        const file = path.join(dir, 'auth.json');
+        fs.writeFileSync(file, VALID);
+        const browser = { newContext: jest.fn().mockResolvedValue({ id: 'ctx' }), close: jest.fn() };
+        chromium.launch.mockReset().mockResolvedValue(browser);
+
+        await getAuthenticatedContextWithFile(file);
+        expect(browser.newContext).toHaveBeenCalledWith(expect.objectContaining({
+            locale: EXPORT_LOCALE,
+            extraHTTPHeaders: { 'Accept-Language': expect.stringMatching(/^en-US/) },
+        }));
+
+        fs.removeSync(dir);
+    });
+
+    it('reports the language the page actually came up in', async () => {
+        const page = { evaluate: jest.fn().mockResolvedValue({ language: 'en-US', intl: 'en-US' }) };
+        await logBrowserLocale(page);
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('navigator.language=en-US'));
+    });
+
+    // A disagreement with the pinned locale is the diagnosis a failed selector
+    // needs, so it has to be visible in the log and not swallowed.
+    it('surfaces a language that differs from the one requested', async () => {
+        const page = { evaluate: jest.fn().mockResolvedValue({ language: 'de-DE', intl: 'de-DE' }) };
+        await logBrowserLocale(page);
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('de-DE'));
+    });
+
+    // Diagnostics must never be the reason an export fails.
+    it('never throws when the page cannot be evaluated', async () => {
+        const page = { evaluate: jest.fn().mockRejectedValue(new Error('Target closed')) };
+        await expect(logBrowserLocale(page)).resolves.toBeUndefined();
+        expect(logger.info).not.toHaveBeenCalled();
     });
 });

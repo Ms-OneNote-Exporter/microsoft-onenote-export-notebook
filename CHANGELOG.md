@@ -4,6 +4,44 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The export no longer depends on the operator's operating-system language.**
+  The Office Online "Download a Copy" menu is found by UI text that exists in
+  English and French only, and Playwright's `locale` option defaults to the system
+  locale — so the same tool could work on one machine and fail on another, with
+  nothing in the log to say why. The browser context now requests `en-US`.
+
+  The language has to be set in two places, which is not obvious and was verified
+  against a real browser rather than assumed:
+
+  | Client | `locale: 'en-US'` | `Accept-Language` in `extraHTTPHeaders` |
+  |--------|--------------------|----------------------------------------|
+  | page requests (the selectors) | yes | yes |
+  | `context.request` (the file downloads) | **no** | yes |
+
+  `context.request` is what downloads every attachment, image and video, and
+  Playwright's `BrowserContextAPIRequestContext` copies `userAgent`,
+  `extraHTTPHeaders`, `proxy` and `baseURL` into its defaults but **not** `locale`
+  — so a `locale` on its own would have left every download going out with no
+  language at all while the pages were English.
+
+  Each run now also logs the language the page actually came up in, which is the
+  answer when a download-menu selector finds nothing:
+
+  ```
+  Browser language: navigator.language=en-US, Intl=en-US (requested en-US).
+  ```
+
+  The limit worth knowing: Microsoft for the web takes its display language from
+  the signed-in profile, and Office Online additionally from the `lc`/`mkt`
+  parameters SharePoint appends to the WOPI URL. An account whose language is not
+  English can still render a non-English menu — the log line above is how you find
+  out. Setting `--lang`-style flags or relying on the machine's language will not
+  change that; it is a per-account setting.
+
 ## [0.3.0] - 2026-09-29
 
 A **minor** bump, not a patch, because of one entry below: a run that completes
