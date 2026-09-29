@@ -11,7 +11,8 @@ const readline = require('readline');
 const fs = require('fs-extra');
 const path = require('path');
 
-const { downloadAttachment } = require('./downloadStrategies');
+const { downloadAttachment, getStrategyStats } = require('./downloadStrategies');
+const { formatStrategySummary } = require('./utils/strategyStats');
 const { safeName, uniqueName } = require('./utils/naming');
 
 // Reads a blob: URL from inside the page and returns it as base64.
@@ -1018,6 +1019,19 @@ function reportSummary(stats, linkStats, outputBase, stoppedFor = null) {
     );
     if (linkStats) {
         logger.info(`Internal links: ${linkStats.resolved} resolved, ${linkStats.unresolved} unresolved`);
+    }
+    // F-32. Which strategy fetched the attachments, and how often it was tried and
+    // gave up the chain. The Direct strategy costs up to ~72s before the two cheap
+    // ones are even reached, so "entered 40 times, won 0" is the evidence needed
+    // to reorder or drop it - and there was no way to get that evidence before.
+    //
+    // Info, not warn: on a notebook whose attachments live in a library the
+    // Direct strategy cannot reach, "0/12" is the normal, expected result and not
+    // a problem with the run. It is a measurement, and it sits with the other
+    // totals.
+    const strategyLine = formatStrategySummary(getStrategyStats());
+    if (strategyLine) {
+        logger.info(strategyLine);
     }
     logger.info(`Files saved in: ${outputBase}`);
 }

@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The export summary now reports which download strategy fetched each
+  attachment.** Every attachment tries the strategies in order, and the first one
+  can spend up to ~72 seconds driving the Office Online "Download a Copy" menu
+  before the two cheap strategies are even reached. Nothing recorded whether that
+  expensive path was the one that actually worked, so a strategy that never
+  succeeds and one that always succeeds produced identical logs:
+
+  ```
+  Attachment downloads by strategy (wins/attempts): Direct (cloud page) 0/12,
+    UI click 11/12, Fallback (direct request) 1/12
+  ```
+
+  Attempts are counted when a strategy is **entered**, not when it wins — that is
+  the whole point, since "entered 12 times, won 0" is the finding and it is
+  invisible if the count only happens on a success. The numbers are the evidence
+  needed to reorder the chain or drop the expensive strategy, and there was no
+  way to get them before.
+
+  Strategies that never ran are still named, at `0/0`: an omitted entry reads as
+  an oversight rather than as dead weight. The line is omitted entirely when the
+  notebook has no attachments.
+
 ### Fixed
 
 - **An empty section group now says which kind of empty it was.** The warning that

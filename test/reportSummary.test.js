@@ -70,6 +70,37 @@ describe('reportSummary', () => {
         expect(said()).toContain('12 resolved, 3 unresolved');
     });
 
+    // F-32: which download strategy did the work, and how often the expensive one
+    // was entered and lost. This is the only evidence for reordering the chain.
+    it('reports which download strategy won, and how often the others were entered', () => {
+        const { resetStrategyStats, getStrategyStats } = require('../src/downloadStrategies');
+        const { recordAttempt, recordWin } = require('../src/utils/strategyStats');
+        resetStrategyStats();
+
+        const stats = getStrategyStats();
+        recordAttempt(stats, 'direct');
+        recordAttempt(stats, 'direct');
+        recordWin(stats, 'ui-click');
+
+        reportSummary(newStats(), null, '/out/NB');
+
+        const out = said();
+        expect(out).toContain('wins/attempts');
+        expect(out).toContain('Direct (cloud page) 0/2');
+        expect(out).toContain('UI click 1/1');
+        resetStrategyStats();
+    });
+
+    it('says nothing about strategies when no attachment was fetched', () => {
+        const { resetStrategyStats } = require('../src/downloadStrategies');
+        resetStrategyStats();
+
+        reportSummary(newStats(), null, '/out/NB');
+
+        // A line of zeroes on every run of a notebook with no attachments is noise.
+        expect(said()).not.toContain('wins/attempts');
+    });
+
     it('always states where the files went', () => {
         reportSummary(newStats(), null, '/out/My Notebook');
         expect(said()).toContain('/out/My Notebook');
