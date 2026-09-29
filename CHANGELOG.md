@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`npm test` now checks the review document's own arithmetic.**
+  `REVIEW-CODE.md` is the thing people read to decide what still needs doing, and it
+  had drifted: F-22 and F-34 each had two register rows with contradictory statuses,
+  and F-35 was listed as open in the summary for several edits *after* the commit
+  that fixed it. A document you cannot trust on "what is left" is worse than no
+  document, so the claims are now tests — no finding listed twice, every status in a
+  recognised form, every partial fix naming its residual, the header's severity
+  counts matching the table, and no finding the register calls fixed appearing in
+  the still-open list.
+
 ## [0.3.5] - 2026-09-29
 
 A **patch**, and the reasoning is worth stating because the gap from 0.3.1 looks
