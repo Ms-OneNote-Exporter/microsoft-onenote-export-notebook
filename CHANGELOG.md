@@ -4,7 +4,11 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1] - 2026-09-29
+
+A **patch**, not a minor: this removes a dependence on the machine the export runs
+on, and adds nothing new for anyone already exporting from an English-language
+machine. No CLI contract, exit code or output format changes.
 
 ### Fixed
 
