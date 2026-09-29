@@ -1,9 +1,14 @@
 # Code Quality Review — Plan
 
-**Target:** `@msout/microsoft-onenote-export-notebook` v0.1.1
-**Branch:** `feat/code-review-by-spacebunny`
+**Target:** `@msout/microsoft-onenote-export-notebook` — reviewed at v0.1.1, reconciled
+at v0.3.5
+**Branch:** started on `feat/code-review-by-spacebunny`; the fixes are on `main` as one
+PR per finding (#19–#22 for the last four) and the original branch is merged
 **Reviewer:** SpaceBunny
-**Status:** Plan approved — Phases 0-2 in progress
+**Status:** **All Critical and High fixed. All Medium fixed, or fixed with a limit that
+is argued in the register rather than assumed.** The Low/Info tail and the untriaged
+§6 items are open — they are listed in §8a, and the ladder in §7 is kept as the record
+of the order the work actually landed in.
 
 ## 0. Decisions taken (2026-09-27)
 
@@ -772,10 +777,14 @@ that real tests exist.
 
 ## 7. Findings register
 
-**50 findings: 1 Critical, 8 High, 24 Medium, 17 Low/Info.** Full evidence for each is in
-the Phase 2 section above; this table is the index and the fix ladder. Four more
-(F-55, F-56, F-57, F-58) came out of a real run and are written up in Phase 2d,
-which also records the diagnosis I got wrong first.
+**64 findings: 1 Critical, 14 High, 22 Medium, 27 Low/Info.** Full evidence for each
+is in the Phase 2 section above; this table is the index. Four more (F-55, F-56, F-57,
+F-58) came out of a real run and are written up in Phase 2d, which also records the
+diagnosis I got wrong first, and F-60 through F-65 came out of a second one.
+
+**Every Critical and High is fixed. Every Medium is fixed or fixed with a stated
+and argued limit** — see the standing table in §8a. What remains open is the
+Low/Info tail and the untriaged items in §6.
 
 | ID | Sev | Area | One-line summary | Status |
 |----|-----|------|------------------|--------|
@@ -798,7 +807,7 @@ which also records the diagnosis I got wrong first.
 | F-31 | Low | `linkResolver.js:10` | Resolver returns `void`; unresolved links are invisible | **fixed** `a306c9d` |
 | F-02 | Medium | `scrapers.js` | **Corrected, then fixed.** The original finding said "route the 4 `console.*` calls through the logger", which would have been a runtime bug: they sit inside browser-context `evaluate()` callbacks where a Node module is not in scope. The real defect was the destination — a browser console nobody has open | **fixed** — the diagnostics are collected in the page and **returned**, then logged on the Node side, with each message's level preserved. The `FAILED to match real element` line is a warning because it predicts a download that cannot succeed, and it now reaches `logs/app.log` |
 | F-21 | Low | `exporter.js:122` | ~~`navigateBack` failure ignored ⇒ traversal continues against the wrong tree~~ — **disproved by a real run**; the throw I added broke the export. Reverted `4e8d065`. | reverted |
-| F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | **fixed** `d878ceb` |
+| F-22 | Medium | `scrapers.js:52` | A missing group container made a whole subtree vanish at default log level | **fixed** `d878ceb` (warning added) and again in `985ac08` — `getSections` now returns `{ items, reason }` (`no-parent` / `no-container` / `empty`) and `emptyLookupWarning` names the remedy. A genuinely empty group is now silent, which was the one case where the old message was pure noise |
 | F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | **fixed** — `withRetry` gained `maxElapsedMs`; an attachment is capped at 30s of wall clock, which the strategy that actually works (4s) fits inside. **The evidence half is now fixed too:** `utils/strategyStats.js` counts attempts *and* wins per strategy and the summary prints `wins/attempts`, so "Direct entered 40 times, won 0" is now visible — which is what reordering or dropping the ~72s Office Online path needs |
 | F-60 | Medium | `scrapers.js:425` | One file attachment is scraped 2–3 times: a `div.WACEFContainer[role=link]` and the `span.WACEFOverlay` inside it both match, so the same PDF is downloaded repeatedly and lands as `file.pdf`, `file_1.pdf`, … **Confirmed live** (`Section1-Note1.1_PDFs` produced 3 entries for 1 file) | **fixed** — a candidate whose ancestor names the same file is a part of that file, not a file of its own. 3 → 2 on the live page, and the entry that had no click marker at all now has one |
 | F-61 | **High** | `exporter.js:527`, `scrapers.js:267` | A page that had not finished rendering was written as a 15-byte note containing the string `Page Contents`, and the run reported success | **fixed** — wait for the requested page to be *settled* on the canvas: the right title, exactly one copy of it, and two consecutive identical readings (images load after the outlines do). Re-select once, then fail the page by name with nothing written, naming what the canvas really showed |
@@ -807,7 +816,7 @@ which also records the diagnosis I got wrong first.
 | **F-64** | Medium | `exporter.js:695`, `714`, `750` | **Fixed.** Images, attachments and videos all rewrote their link to the final file name *before* attempting the download, so a failed download left `[[assets/…]]` pointing at a file that was never written. The page rendered as complete with an empty embed; the only trace was an `ERROR` in the log. 8 occurrences in a baseline run, 1 after the F-61/F-63 work | **fixed** — the link is kept, as the README's trade-off intends, and the page now ends with a notice naming what is missing, rebuilt each run so it self-clears on a re-run. Covers all three asset types. **Correction:** this was first written up as a "pre-existing defect needing a product decision", which was wrong — the README already documented the behaviour as deliberate ("it costs a re-run rather than correctness"). The gap was the missing half of a documented trade-off, not an unintended defect |
 
 | **F-65** | **High** | `exporter.js:1108` | **Fixed.** F-01's residual, one level down: a run that lost pages, sections or groups printed `Export finished with errors - N item(s) could not be exported` and **still exited `0`**. The summary was truthful and nothing acted on it, so a CI job could go green over a vault with holes in it. Not hypothetical — this session's own F-62 verification run lost 8 pages that way | **fixed** — a pure `exitCodeForStats()` returns `3` when pages, sections or groups are missing, and `runExport` applies it. `3` rather than reusing `1`, because the two call for opposite responses: `1` is "nothing usable came out, retry from scratch", `3` is "mostly fine, some items absent", where retrying would discard a good vault. Failed *assets* deliberately do not change the exit code — downloads fail routinely, so a code set on nearly every run stops being read; they are counted in the summary and named in the note instead. A run whose tab died still exits `1`, since that is an unknown fraction rather than a known partial |
-| F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
+| F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | **fixed** — marked handled at creation, awaited later. (The same class was fixed in `navigator.js`, `d878ceb`. An earlier row in this table said "open"; it contradicted the one below it and the code was the authority.) |
 | F-33 | Medium | `downloadStrategies.js:136-172`, `auth-context.js` | Office Online automation is EN/FR only, and nothing pinned the language | **partly fixed** — `auth-context.js` now pins `locale: 'en-US'` **and** `Accept-Language` in `extraHTTPHeaders`, and logs the language the page actually came up in. Verified against real Chromium: `locale` reaches the page but **not** `context.request`, which is the client that downloads the files, so the header has to be set in both places. **Still open:** an account whose language is not English can still render a non-English menu, because M365 takes the UI language from the profile and Office Online additionally from the `lc`/`mkt` parameters the SharePoint host appends. What the fix buys is that the tool stops depending on the operator's OS language, and that a failure now says which language the page was in |
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | **fixed** — `--verbose`/`--quiet` + `ONENOTE_EXPORT_LOG_LEVEL`, default hides debug; rotates at 5 MB |
 | F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | **fixed** — XDG state dir for global installs, `ONENOTE_EXPORT_LOG_DIR` override |
@@ -816,18 +825,17 @@ which also records the diagnosis I got wrong first.
 | F-46 | Medium | `start-container.sh:35` | Container-name mismatch, hardcoded paths, foreground run called "detached" | **fixed** — name, image, output dir and auth file all overridable; `--init` + `--shm-size=1g` added |
 | F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | **fixed (warn, by decision)** — classified and logged once per host; nothing blocked |
 | F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | **fixed** — dirs 0700, files 0600, existing app.log tightened at startup |
-| F-22 | Medium | `scrapers.js`, `exporter.js:483` | A section lookup returned `[]` with no reason, so "this group is empty" and "I never found its container" were indistinguishable | **fixed** — `getSections` returns `{ items, reason }` (`no-parent` / `no-container` / `empty`), and `emptyLookupWarning` turns the reason into a warning that names the remedy. A genuinely empty group is now silent, which is the one case where the old message was pure noise |
-| F-23 | Medium | `scrapers.js`, `attachmentNames.js` | 20+ untestable inline heuristics; the 19-extension list was written out **3×** in one `evaluate()` callback, with nothing keeping the copies equal | **partly fixed** — `attachmentNames.js` owns the list, the pattern and the name-preference order, with 21 tests; the three copies are now one definition, passed into the page as a regex *source string* and rebuilt there. **Left open by design:** the heuristics that need a live DOM (`fileOwner`'s ancestor walk, `fileLabel`, the real-element match) cannot leave the callback, because Playwright serialises it into the browser and a `require` there throws. Injecting them as source text to rebuild with `new Function` would make them Node-testable at the cost of `eval` against a Microsoft login page — not a trade worth making for a filename heuristic |
+| F-23 | Medium | `scrapers.js`, `attachmentNames.js` | 20+ untestable inline heuristics; the 19-extension list was written out **3×** in one `evaluate()` callback, with nothing keeping the copies equal | **partly fixed** `fb4816e` — `attachmentNames.js` owns the list, the pattern and the name-preference order, with 21 tests; the three copies are now one definition, passed into the page as a regex *source string* and rebuilt there. Also widened by `.doc`/`.xls`/`.ppt`, which the old list omitted and so never downloaded. **Left open by design:** the heuristics that need a live DOM (`fileOwner`'s ancestor walk, `fileLabel`, the real-element match) cannot leave the callback, because Playwright serialises it into the browser and a `require` there throws. Injecting them as source text to rebuild with `new Function` would make them Node-testable at the cost of `eval` against a Microsoft login page — not a trade worth making for a filename heuristic, and the fixture tests cover that behaviour in a real browser |
 | F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11 | Low/Info | various | Dead code, empty catches, `no-cond-assign`, unused params, useless escapes | **fixed** `a306c9d` |
 | F-41 | Low | `config.js:11,17` | `USER_DATA_DIR` exported, never imported | **fixed** — dead export removed |
-| F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | **fixed** — marked handled at creation, awaited later |
 | F-39 | Low | `retry.js:56` | Unreachable trailing `throw lastError` | **fixed** — now rejects instead of resolving `undefined` when `maxAttempts <= 0` |
 | F-50 | Low | `README.md` | Project Structure named a non-existent root, omitted half the repo | **fixed** — rewritten, with a test that keeps it honest |
 | F-54 | Low | `scrapers.js:132-140` | Page-label stripping is order-dependent: the trailing `Page. Select…` must be removed first for the `page N of M` rule to match at the end. A label shaped `<name>, page 2 of 5, Page.` would keep its whole suffix. **Not a live shape** — confirmed against the capture, so deliberately not "fixed" | open (documented) |
 | F-13 | Medium | `exporter.js:544` | `runExport` contained the same ~35 lines twice (44% textual overlap between the two paths) | **fixed** — extracted `findContentFrame()` and `exportContent()`; 238 lines → 115 |
 | F-16 | Medium | `exporter.js` | Re-runs duplicated assets instead of refreshing them | **fixed by decision** — overwrite by default, with a warning naming the folder and stating what will be overwritten |
-| F-18, F-19, F-27, F-28, F-35, F-43, F-49 | Low/Info | various | Remaining polish: unused `content.title`, blank-line prefix when there is no date outline, image `alt` text, table header assumption, per-strategy download stats, diagnose-script arg parsing, image extension validation | open |
-| F-38 | Low | `logger.js:25-31` | Timestamp omitted the year and timezone; `dumpSubDir` has minute granularity | **partly fixed** — ISO date + UTC offset added; dump-dir granularity unchanged |
+| F-35 | Low | `downloadStrategies.js` | No per-strategy success statistics, so there was no way to tell whether the Direct strategy was earning its ~72s | **fixed** `1a5ab1b` — `utils/strategyStats.js` counts attempts and wins per strategy and the summary prints `wins/attempts`. (This was **wrongly** still listed in the "open" bundle for three releases' worth of edits; the per-strategy stats arrived with the F-32 fix.) |
+| F-18, F-19, F-27, F-28, F-43, F-49 | Low/Info | various | Remaining polish: unused `content.title`, blank-line prefix when there is no date outline, image `alt` text, table header assumption, diagnose-script arg parsing, image extension validation | open |
+| F-38 | Low | `logger.js:25-31`, `:297` | Timestamps omitted the year and timezone; `dumpSubDir` has minute granularity; the logger ran `ensureDirSync` as an import side effect | **partly fixed** — ISO date + UTC offset added. **Still open:** the dump directory is still minute-granular, so two runs in the same minute share it, and `module.exports = new Logger()` is still a require-time side effect, so merely importing any module can throw on a read-only filesystem |
 | F-55 | High | `exporter.js:552,634` | One `Frame` object was pinned for the whole export, so a frame OneNote re-creates — or a tab/renderer that dies — ended the run at the next DOM call | **fixed** — `notebookFrame.js`: hold the page, resolve the frame per call, recover or report. *Found while chasing F-58; not its cause* |
 | F-56 | **High** | `index.js:61` | A closed target makes Playwright reject an internal promise; Node killed the export with an unhandled rejection before the CLI's own handler ran | **fixed** — `parseAsync()` + an `unhandledRejection` handler; browser now closes, exit code is `1` |
 | F-57 | Medium | `exporter.js:647` | The `.sectionList` wait reported every failure as "Timeout", including an instantly-failing dead target | **fixed** — only a `TimeoutError` is called a timeout; anything else names its cause |
@@ -837,27 +845,48 @@ Severity scale: **Critical** = silent data loss / false success / security ·
 **High** = wrong output or hangs · **Medium** = maintainability, perf, portability ·
 **Low** = polish.
 
-### Fix ladder
+### Fix ladder — as it was set, and as it landed
 
-**P0 — correctness of the failure contract (do first, small diffs)**
+**Kept as written, because the order was the argument.** The ladder below is the one
+this review set out with. Every rung shipped, in this order, which is the useful
+record: the small correctness fixes came first, then data fidelity, then
+observability, then structure. What is *not* in these rungs is the work that arrived
+from the two real export runs (F-55 through F-65), which was more serious than
+anything the ladder anticipated.
+
+**P0 — correctness of the failure contract (small diffs)** — all shipped
 F-01 (rethrow / return a result, map exit codes) · F-42 (fix the arity) · F-14 (fallback
 name when `sanitize()` is empty) · F-12 (`--version` from `package.json`).
-These four are tiny, independent, and each removes a way for the tool to lie or lose data.
+These four were tiny, independent, and each removed a way for the tool to lie or lose
+data. F-01 turned out not to be one fix but two: F-65, its residual, was the same
+defect one level down and shipped five releases later.
 
-**P1 — data fidelity + the two silent-wrong-output bugs**
+**P1 — data fidelity + the two silent-wrong-output bugs** — all shipped
 F-24 (pass the real extension into the turndown rule) · F-25 (escape `|` in cells) ·
-F-29 (specificity-ordered id matching) · F-20 (re-verify the notebook name before clicking)
-· F-30 (normalise separators).
+F-29 (specificity-ordered id matching) · F-20 (re-verify the notebook name before
+clicking) · F-30 (normalise separators).
 
-**P2 — observability and robustness**
-F-17 (failure counts + non-zero exit when items failed) · F-32 (per-attachment time budget) ·
-F-36/F-37 (log level + log path) · F-22 (warn on a missing group container) · F-21 (honour
-`navigateBack`) · F-48 (0600 dumps) · F-40 (validate `auth.json`, close browser on failure).
+**P2 — observability and robustness** — all shipped
+F-17 (failure counts + non-zero exit when items failed) · F-32 (per-attachment time
+budget, and later the per-strategy stats) · F-36/F-37 (log level + log path) · F-22
+(warn on a missing group container, and later say *which* kind of empty) · F-21
+(honour `navigateBack` — **disproved and reverted**, which is why it is struck rather
+than ticked) · F-48 (0600 dumps) · F-40 (validate `auth.json`, close browser on
+failure).
 
-**P3 — structure, dead code, docs, Docker**
-F-23 (extract heuristics into a pure, testable module) · duplicated notebook-link flow ·
-F-15/F-16 (collision + overwrite policy) · F-44/F-45/F-46 (Docker) · F-50 (README) ·
-all Low/Info items · `npm test` real tests + CI workflow.
+**P3 — structure, dead code, docs, Docker** — shipped, except F-23, which is partial
+F-23 (extract heuristics into a pure, testable module — **partly**: the extension list
+and the name-preference order moved out and are tested; the DOM-bound heuristics cannot
+without `eval`) · duplicated notebook-link flow (F-13) · F-15/F-16 (collision +
+overwrite policy) · F-44/F-45/F-46 (Docker) · F-50 (README) · all Low/Info items —
+**not all**; the tail is still open and is listed in §8a · `npm test` real tests + CI
+workflow (53 tests at the time; **447** now).
+
+**What the ladder got wrong.** It treated F-21 as a fix to make, and making it broke
+the exporter. It also had no rung for the defects that a real export run exposes, which
+turned out to be the expensive ones: F-55 through F-65 are all High or Medium, and
+none of them was in this list. The lesson is written up below and belongs next to the
+ladder that produced it.
 
 ### Deliberately not "fixing" without discussion
 
@@ -907,6 +936,31 @@ all Low/Info items · `npm test` real tests + CI workflow.
 | `4e8d065` | **Regression from `d878ceb` reverted** (F-21 was wrong), **F-51** blob URLs, **F-52** asset name reservation, **F-53** data: URL validation, CI installs Chromium |
 | `b77417f` | **F-32 partly fixed** — permanent failures skip the retry backoff; `maxAttempts` deliberately unchanged |
 
+**Release 0.3.1 — the review resumed after a pause.** One finding, because the rest
+needed decisions rather than work.
+
+| Commit | What |
+|--------|------|
+| `75192b8` | **F-33 partly** — pin `en-US`, and `Accept-Language` in `extraHTTPHeaders` as well because `locale` does not reach `context.request`. Verified against real Chromium: a `de-DE` context sends no language to the download client at all |
+| `d0a5f4a` | Register: the §8a open list was naming nine fixed findings as open |
+| `ab462ab` | `chore: release 0.3.1` |
+
+**Release 0.3.5 — the four standing Mediums, one per PR.** Each got its own branch
+and its own merge, so the diffs stayed reviewable and a mistake in one could not hide
+inside another.
+
+| Commit | What |
+|--------|------|
+| `985ac08` | **F-22** — `getSections` returns a reason; the warning names the remedy; a genuinely empty group is silent |
+| `1a5ab1b` | **F-32** and **F-35** — per-strategy `wins/attempts` in the summary. Attempts counted on *entry*, which is the only way "entered 40 times, won 0" is visible |
+| `36add33` | **F-02** — scraper diagnostics returned from the page and logged Node-side, levels preserved. The `FAILED to match real element` line predicts a download that cannot succeed and had been going to a browser console |
+| `fb4816e` | **F-23 partly** — the 19-extension list defined once in a tested module, passed into the page as a regex source string; `.doc`/`.xls`/`.ppt` added |
+| `4c1ec36` | `chore: release 0.3.5` |
+| `d8f1c2a` | This reconciliation: two contradictory duplicate rows removed, F-35's status corrected, the ladder and the next-session list replaced with what actually remains |
+
+**447 tests across 26 suites**, up from 382 when the review paused. Every one of the
+four had at least one test verified to fail against the pre-fix code.
+
 **F-33 — the language the tool asks Microsoft for (2026-09-29).** The Office Online
 download menu is selected by UI text that exists in English and French only, and
 Playwright's `locale` option "defaults to the system default locale", so the export
@@ -927,16 +981,26 @@ M365 takes the UI language from the signed-in profile, and Office Online additio
 from the `lc`/`mkt` parameters the SharePoint host appends to the WOPI URL. Nothing in
 this codebase touches those, and forcing a header does not override an account setting.
 
-**Fixed: 1 Critical, 6 High, 10 Medium, 14 Low/Info.** The Open line above is stale —
-F-33, F-36, F-37, F-40, F-44, F-45, F-46, F-47 and F-48 are all fixed; the register rows
-are the authority, and the §8a "next session" list below is the part that needs updating.
+**Standing as of 2026-09-29**, reconciled against `4c1ec36` (v0.3.5) by reading every
+register row rather than by trusting the totals above — which is how the F-35 error
+below was found.
 
-**Standing as of 2026-09-29**, Medium → Low, verified against `4559a90`:
+| Sev | State |
+|-----|-------|
+| Critical | **0 open.** F-01 fixed, and its residual F-65 with it. |
+| High | **0 open.** All 14 fixed. F-20 was corrected down to Low when the live capture disproved its mechanism. |
+| Medium | **0 open.** All 22 fixed, or fixed with a limit that is argued rather than assumed: **F-33** (M365 takes its UI language from the account profile, and Office Online from the `lc`/`mkt` parameters SharePoint appends — nothing here overrides an account setting) and **F-23** (the DOM-bound heuristics cannot leave the browser callback without `eval` against a Microsoft login page; the fixture tests cover them in a real browser). |
 
-| Sev | Findings |
-|-----|----------|
-| Medium | F-33 residual (M365 takes its UI language from the account profile, so a non-English account can still render a non-English download menu) · F-23 residual (the DOM-bound heuristics cannot leave the browser callback) |
-| Low/Info | F-18, F-19, F-27, F-28, F-35, F-38 residual, F-43, F-49, F-54 · plus the untriaged §6 items: `processSections`' 8 positional parameters and mutable default `stats`, `openNotebook`'s leaked listing page, the download popups that leak on the error path, `linkResolver`'s case-folding and second full read/write pass, and 15 remaining fixed sleeps |
+| Sev | Still open |
+|-----|-------------|
+| Low/Info | F-18 unused `content.title` · F-19 the `className` guard asymmetry (latent, unreachable today) · F-27 image `alt` discarded · F-28 first-row-as-header assumption · F-38 residual: `dumpSubDir` still has minute granularity, and `module.exports = new Logger()` is still a require-time side effect · F-43 the `diagnose-*` scripts hand-roll `process.argv` parsing and call `process.exit` inside functions · F-49 images always written `.png`, no `content-type` check · F-54 order-dependent page-label stripping (documented, deliberately not fixed — not a live label shape) |
+| Untriaged (§6, no ID) | `processSections`' 8 positional parameters and its mutable default `stats` · `openNotebook` leaks the listing page · the download popups leak on the error path · `linkResolver`'s case-folding vs a case-sensitive filesystem, and its second full read/write pass · 15 remaining fixed `waitForTimeout` sleeps |
+
+**Closed rather than fixed, and deliberately not counted as open.** F-21 was
+recorded as a Medium, "fixing" it broke the exporter, and a real run disproved it —
+so it is reverted, not pending. F-20 was a High until the live capture showed the
+cross-table collision cannot occur, and was corrected down to Low with the name check
+kept as defence-in-depth. Both are the register working, not two more items of work.
 
 ### Lesson worth keeping (from F-21)
 
@@ -953,34 +1017,63 @@ what happens", and the fix should have been a log line, not a throw.
 
 ### Next session, in priority order
 
-1. **F-44 / F-45 / F-46 — Docker.** `COPY . /app` instead of `git clone`, `npm ci`, pin the
-   base image, non-root user, `.dockerignore`, `--init` + `/dev/shm` for Chromium; assert the
-   export exit status in `entrypoint.sh`; fix the `oneexp_` vs `one-` name mismatch and the
-   hardcoded sibling-repo path in `start-container.sh`. Self-contained, no product risk.
-2. **F-36 / F-37 — logger.** Add level gating (a `--verbose` flag, or honour an env var) and
-   move the log path out of `node_modules` for global installs. Touches every call site's
-   behaviour, so it wants its own commit and a note in the README.
-3. **F-32 — per-attachment time budget.** Cap the retry × strategy multiplication, and record
-   per-strategy success counts so the ~72s Office Online path can be justified or dropped.
-4. **F-23 — extract the attachment heuristics** into a pure module with tests, now that the
-   harness exists. Biggest testability win, and a precondition for the fixture tests.
-5. **F-40 / F-48 — `auth.json` validation, 0600 dumps, close the browser on context failure.**
-6. **Duplicated `runExport` flow** (44% textual overlap) — only after the fixture tests exist.
-7. **README** (F-50) and the remaining Low/Info items.
+**Everything on the previous list is done.** It is replaced rather than deleted,
+because "what this review still owes" is the only useful version of this section,
+and the previous list scheduled F-44/F-45/F-46, F-36/F-37, F-32, F-23 and F-40/F-48 —
+all shipped.
 
-**Resolved since the last session note.** The gap recorded here — a failed
-download visible in the note and the log, but not in the summary, and the run
-exiting `0` — is now F-65 and is fixed: exit `3` for anything missing from the
-vault, and failed assets counted in the summary.
+1. **`processSections` — 8 positional parameters and a mutable default `stats`.** The
+   only untriaged item that touches the export hot path, and the last structural one.
+   The recursive call passes `outputDir, td, options, pageIdMap, processedItems,
+   parentId, stats` in a row where two of them are the same shape. A single `ctx`
+   object would make the recursion legible; the `stats` default in particular is a
+   shared-mutable-state trap that a test would have to be careful not to depend on.
+2. **F-38 residual — `logger.js:297`.** `module.exports = new Logger()` runs
+   `ensureDirSync` at require time, so merely importing any module can throw on a
+   read-only filesystem. One line of laziness, and the only remaining import-side-effect
+   in the codebase. `dumpSubDir`'s minute granularity is cosmetic next to it.
+3. **F-43 — the `diagnose-*` scripts.** They hand-roll `process.argv` parsing while
+   `commander` is already a dependency, and call `process.exit` inside functions. They
+   also ship in the tarball via `files: ["src/"]`, which is a packaging question worth
+   deciding rather than a code one.
+4. **F-49 / F-27 — asset fidelity.** Images are always written `.png` regardless of the
+   real format, and image `alt` text is discarded, so `![[assets/x.png|alt]]` would
+   round-trip. Both are small, both change output, both want a decision about whether
+   the extension should follow the actual content type.
+5. **F-18 / F-28 / F-54 — the remaining parser and scraper polish**, plus
+   `openNotebook`'s leaked listing page and the download popups that leak on the error
+   path. All Low. All want a browser run to confirm against the live UI.
+6. **`linkResolver`'s case-folding and second full read/write pass.** The correctness
+   half is done; this is the cost half, and it wants a measurement on a real notebook
+   rather than a guess about which of the two matters.
+
+**Deliberately not scheduled.** F-33's residual and F-23's residual both need a
+decision rather than a patch: one is a per-account language setting the tool cannot
+override, the other needs `eval` in a Microsoft login page. Neither improves by being
+attempted again. See the standing table above.
 
 ## 9. Open questions
 
-Resolved on 2026-09-27 — see §0. Still open:
+Resolved on 2026-09-27 — see §0. Both of the original two are now answered:
 
-1. **P0 fix boundaries.** The exit-code fix (F-01) changes the CLI contract — a failed
-   export will start returning non-zero. Confirm that is acceptable for anyone currently
-   relying on the always-zero behaviour (e.g. the Docker service), or whether it needs a
-   release note / version bump.
-2. **Scope of the internal refactors.** Removing the duplicated notebook-link flow and
-   extracting asset naming are Medium-sized changes to the export hot path. Confirm they
-   are wanted on this branch rather than deferred to a follow-up.
+1. ~~**P0 fix boundaries.**~~ **Answered.** F-01 shipped as exit `1`, F-65 added exit
+   `3`, and 0.3.0's CHANGELOG states the bump reasoning up front so anyone keying on
+   `== 0` sees why. The Docker service was the one dependant and it is covered by
+   F-45's maintainer decision: the container wrapper tolerates a failure and says so on
+   stderr, pinned by `test/entrypoint.test.js`.
+2. ~~**Scope of the internal refactors.**~~ **Answered.** The duplicated `runExport`
+   flow is gone (F-13, `2807715`) and asset naming was extracted rather than deferred.
+   Both landed before the fixture tests existed, which is the outcome the review
+   recommended and the one that needed the most care.
+
+**New, opened 2026-09-29.** None of these block anything; they are the decisions a
+maintainer should make rather than an agent:
+
+1. **The published version sequence has holes.** 0.3.1 is followed by 0.3.5; 0.3.2,
+   0.3.3 and 0.3.4 were never published. The numbering was tied one-to-one to this
+   register's open findings, which reads well here and badly on the npm registry. The
+   0.3.5 CHANGELOG says so, which is mitigation rather than a fix.
+2. **`files: ["src/"]` ships both `diagnose-*` scripts.** They are developer tooling
+   that the README points at for "find the right selectors", so shipping them is
+   arguably right — but they are 336 lines of hand-rolled CLI in the package, and the
+   F-42 arity bug lived in one of them until this review found it.
