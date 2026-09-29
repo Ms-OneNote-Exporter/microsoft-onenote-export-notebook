@@ -782,7 +782,7 @@ which also records the diagnosis I got wrong first.
 | F-51 | **High** | `exporter.js:31` | `blob:` image URLs cannot be fetched by the request context ⇒ every inline/printout image silently lost | **fixed** `4e8d065` |
 | F-52 | Medium | `exporter.js:332` | Same-named attachments overwrite each other (filesystem probe instead of reserving planned names) | **fixed** `4e8d065` |
 | F-53 | Low | `exporter.js:22` | Non-base64 `data:` URL failed silently / could write garbage | **fixed** `4e8d065` |
-| F-01 | **Critical** | `exporter.js:539` | Failed export exits 0 — `runExport` swallows every error, disabling all failure detection | **fixed** `4a5e4ce` |
+| F-01 | **Critical** | `exporter.js:539` | Failed export exits 0 — `runExport` swallows every error, disabling all failure detection | **fixed** `4a5e4ce`. **Residual also fixed** — see F-65 |
 | F-20 | High → **Low** | `navigator.js:147,226` | Notebook identity is a row index; the click never re-verified the name | **corrected**: the capture shows ONE table of notebook rows, so the cross-table collision does not occur. Name verification retained as defense-in-depth `d878ceb` |
 | F-24 | High | `parser.js:72` | Video wikilinks hardcode `.mp4` while files are written with the URL's real extension | **fixed** `a306c9d` |
 | F-25 | High | `parser.js:113` | Unescaped `|` in table cells silently adds phantom columns | **fixed** `a306c9d` |
@@ -806,6 +806,7 @@ which also records the diagnosis I got wrong first.
 | **F-63** | **High** | `scrapers.js:492` | **Fixed.** Regression from F-60: attachments were downloaded but no longer linked from the note. The `[[assets/…]]` embed is emitted by a turndown rule keyed on `data-local-file` (`parser.js:26`), and turndown never consults custom rules for a *blank* node — and F-60's dedup kept OneNote's empty click overlay, so the id went there and no embed was produced. `Complete_Paris_9th_Arrondissement_Guide.docx` and `attached_file.bin` sat on disk referenced by **zero** notes | **fixed** — `data-local-file` (renders the link) and `data-one-attach-id` (marks the element to click) are different jobs and were conflated; the id now goes on the element that shows the file's name. Live: 12 assets, 0 orphaned, duplicate `_1` downloads gone, dangling links 8 → 1 |
 | **F-64** | Medium | `exporter.js:695`, `714`, `750` | **Fixed.** Images, attachments and videos all rewrote their link to the final file name *before* attempting the download, so a failed download left `[[assets/…]]` pointing at a file that was never written. The page rendered as complete with an empty embed; the only trace was an `ERROR` in the log. 8 occurrences in a baseline run, 1 after the F-61/F-63 work | **fixed** — the link is kept, as the README's trade-off intends, and the page now ends with a notice naming what is missing, rebuilt each run so it self-clears on a re-run. Covers all three asset types. **Correction:** this was first written up as a "pre-existing defect needing a product decision", which was wrong — the README already documented the behaviour as deliberate ("it costs a re-run rather than correctness"). The gap was the missing half of a documented trade-off, not an unintended defect |
 
+| **F-65** | **High** | `exporter.js:1108` | **Fixed.** F-01's residual, one level down: a run that lost pages, sections or groups printed `Export finished with errors - N item(s) could not be exported` and **still exited `0`**. The summary was truthful and nothing acted on it, so a CI job could go green over a vault with holes in it. Not hypothetical — this session's own F-62 verification run lost 8 pages that way | **fixed** — a pure `exitCodeForStats()` returns `3` when pages, sections or groups are missing, and `runExport` applies it. `3` rather than reusing `1`, because the two call for opposite responses: `1` is "nothing usable came out, retry from scratch", `3` is "mostly fine, some items absent", where retrying would discard a good vault. Failed *assets* deliberately do not change the exit code — downloads fail routinely, so a code set on nearly every run stops being read; they are counted in the summary and named in the note instead. A run whose tab died still exits `1`, since that is an unknown fraction rather than a known partial |
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | **fixed** — `--verbose`/`--quiet` + `ONENOTE_EXPORT_LOG_LEVEL`, default hides debug; rotates at 5 MB |
@@ -939,15 +940,10 @@ what happens", and the fix should have been a log line, not a throw.
 6. **Duplicated `runExport` flow** (44% textual overlap) — only after the fixture tests exist.
 7. **README** (F-50) and the remaining Low/Info items.
 
-**Now open, and worth a decision rather than an implementation.** A failed asset
-download is visible in the note (F-64), logged, and still exits `0`, with
-`Total Assets` counting only what succeeded. So the run's own summary does not
-mention the failure and a pipeline keying on the exit code sees success. F-01
-established that the CLI "always reports the truth", and this is the remaining
-place it does not: either `Total Assets` gains a "failed" companion, or a run
-with failed assets exits non-zero. Both change what automation sees, so it wants
-the treatment F-64 just got — a deliberate recorded answer, not a quietly-taken
-one.
+**Resolved since the last session note.** The gap recorded here — a failed
+download visible in the note and the log, but not in the summary, and the run
+exiting `0` — is now F-65 and is fixed: exit `3` for anything missing from the
+vault, and failed assets counted in the summary.
 
 ## 9. Open questions
 

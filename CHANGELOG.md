@@ -6,7 +6,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Exit code `3`: the export completed, but some pages, sections or groups are
+  missing.** F-01 fixed the case where `runExport` swallowed every error and a
+  failed export exited `0`. This is the same defect one level down, and it was not
+  hypothetical — a verification run in the course of fixing F-62 lost eight pages,
+  printed
+
+  ```
+  Export finished with errors - 8 item(s) could not be exported.
+  ```
+
+  and exited `0`. The summary was truthful and nothing acted on it, so a CI job
+  could go green over a vault with holes in it.
+
+  `3` is deliberately not `1`. `1` means the export blew up and nothing usable
+  came out, which is worth retrying from scratch; `3` means most of it is fine and
+  some items are absent, where retrying would throw away a mostly-good vault. A
+  script that only checks "is it non-zero" keeps working either way.
+
+  A run whose tab died still exits `1` — that is an unknown fraction of the
+  notebook rather than a known partial one, and the distinction is worth keeping.
+
 ### Fixed
+
+- **The summary no longer passes over assets that failed to download.**
+  `Total Assets: 12` next to a page whose notice lists two missing files reads as a
+  complete export. The total now carries the count, and the failure is named:
+
+  ```
+    Assets   failed: 2 (linked, but not downloaded - see the note)
+  Total Assets: 12 (2 could not be downloaded)
+  ```
+
+  Failed assets do **not** make the run non-zero, and that is a considered choice
+  rather than an omission. Downloads fail routinely — three strategies, a 30s cap,
+  an Office Online round trip — so a code set on nearly every real run would stop
+  being read. The page carrying the link also carries a notice naming the file that
+  is not there (F-64 below), which is where someone looking for a missing
+  attachment will actually look.
 
 - **A failed download now says so in the note, not only in the log** (F-64).
   A link to a file that was never written renders as an empty embed, so the page

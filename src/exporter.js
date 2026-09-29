@@ -419,7 +419,53 @@ function renderFailedAssetNotice(assets) {
  * @returns {{totalPages: number, totalAssets: number, failedPages: number, failedSections: number, failedGroups: number}}
  */
 function newStats() {
-    return { totalPages: 0, totalAssets: 0, failedPages: 0, failedSections: 0, failedGroups: 0 };
+    return {
+        totalPages: 0,
+        totalAssets: 0,
+        failedPages: 0,
+        failedSections: 0,
+        failedGroups: 0,
+        // Assets that were linked but never written. Counted apart from the three
+        // above because they are a different kind of problem: the note exists and
+        // carries a notice saying what is missing (F-64), whereas a failed page
+        // means the page is simply not in the vault at all.
+        failedAssets: 0
+    };
+}
+
+/**
+ * The process exit code a finished export should report.
+ *
+ * F-01 fixed the case where `runExport` swallowed an error and the process exited
+ * `0` for a run that produced nothing. The residual was the same defect one level
+ * down: a run that lost pages, sections or groups printed
+ *
+ *     Export finished with errors - 8 item(s) could not be exported.
+ *
+ * and still exited `0`. The summary was truthful and nothing acted on it, so a CI
+ * job went green over a vault missing eight pages. That is not hypothetical
+ * either - it is what this session's own F-62 verification run did.
+ *
+ * `3` rather than `1`, because the two mean different things and a supervisor has
+ * to tell them apart. `1` is "the export blew up, nothing usable came out", which
+ * is worth retrying from scratch. `3` is "most of it is fine and some items are
+ * absent" — the opposite instruction, since retrying would throw away a
+ * mostly-good vault in favour of a fresh attempt. Reusing `1` would also mean
+ * every retry-on-failure supervisor discards the partial export, which is the one
+ * thing this code path goes out of its way to preserve.
+ *
+ * Failed *assets* deliberately do not change the exit code. Downloads fail
+ * routinely — three strategies, a 30s cap, an Office Online round trip — so making
+ * them fatal would mean nearly every real run exits non-zero, and a code that is
+ * always set stops being read. They are counted in the summary and named in the
+ * note, which is where someone looking for them will actually look.
+ *
+ * @param {object} stats - Counters from newStats(), as filled in by the export
+ * @returns {number} 0 for a clean run, 3 when items are missing from the vault
+ */
+function exitCodeForStats(stats) {
+    const missing = stats.failedPages + stats.failedSections + stats.failedGroups;
+    return missing > 0 ? 3 : 0;
 }
 
 async function processSections(contentFrame, outputDir, td, options, pageIdMap, processedItems = new Set(), parentId = null, stats = newStats()) {
@@ -836,10 +882,13 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 logger.success(`Saved (${savedResources} assets)`);
 
                 if (failedAssets.length > 0) {
+                    // Distinct files, matching the notice: the same file attached
+                    // and hyperlinked on one page is one missing file.
+                    const missing = [...new Set(failedAssets)];
+                    stats.failedAssets += missing.length;
                     // The note carries the notice; this line is for someone reading
                     // the log rather than their vault, and names the page so the
                     // re-run target is obvious.
-                    const missing = [...new Set(failedAssets)];
                     logger.warn(
                         `      "${pageInfo.name}": ${missing.length} asset(s) could not be ` +
                         `downloaded and are listed in the note: ${missing.join(', ')}`
@@ -895,8 +944,20 @@ function reportSummary(stats, linkStats, outputBase, stoppedFor = null) {
         logger.warn('  See the errors above and logs/app.log for details.');
     }
 
+    // Assets are reported apart from the three above and do not make the run
+    // non-zero, because the note carrying the link also carries a notice saying
+    // the file is not there. What they must not do is pass unmentioned: "Total
+    // Assets: 12" next to a page whose notice lists two missing files reads as a
+    // complete export, and that is the F-01 shape one level down.
+    if (stats.failedAssets > 0) {
+        logger.warn(`  Assets   failed: ${stats.failedAssets} (linked, but not downloaded - see the note)`);
+    }
+
     logger.info(`Total Pages: ${stats.totalPages}`);
-    logger.info(`Total Assets: ${stats.totalAssets}`);
+    logger.info(
+        `Total Assets: ${stats.totalAssets}` +
+        (stats.failedAssets > 0 ? ` (${stats.failedAssets} could not be downloaded)` : '')
+    );
     if (linkStats) {
         logger.info(`Internal links: ${linkStats.resolved} resolved, ${linkStats.unresolved} unresolved`);
     }
@@ -1064,6 +1125,18 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
     const linkStats = await resolveInternalLinks(pageIdMap, outputBase);
 
     reportSummary(stats, linkStats, outputBase, stopped ? 'the OneNote editor tab went away' : null);
+
+    // The exit code is set here rather than left to the caller because this is the
+    // only place that knows what the run actually managed to write. A run that lost
+    // items has to say so to the process, not just to the log - see exitCodeForStats
+    // for why that is 3 and not 1.
+    //
+    // `stopped` throws below and the caller turns that into exit 1, which is right:
+    // a run whose tab died produced an unknown fraction of the notebook, and that
+    // is a hard failure rather than a partial one. It is deliberately not folded
+    // into this code.
+    process.exitCode = exitCodeForStats(stats);
+
     if (stopped) throw stopped;
     return stats;
 }
@@ -1257,4 +1330,7 @@ module.exports = {
     // downloaded. A unit test is the honest level for the "nothing failed" case,
     // because proving that end to end needs an asset that genuinely downloads.
     renderFailedAssetNotice,
+    // Exported for tests: the exit code a finished run reports. Pure, so the
+    // decision can be tested without a browser or a real notebook.
+    exitCodeForStats,
 };

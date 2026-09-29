@@ -74,12 +74,42 @@ describe('reportSummary', () => {
         reportSummary(newStats(), null, '/out/My Notebook');
         expect(said()).toContain('/out/My Notebook');
     });
+
+    it('does not mention failed assets when there were none', () => {
+        // A warning that appears unconditionally is a warning nobody reads, and
+        // this one would otherwise sit under every successful export.
+        reportSummary(newStats(), null, '/out/NB');
+        expect(said()).not.toContain('failed:');
+    });
+
+    it('counts failed assets instead of passing them over in the total', () => {
+        // "Total Assets: 12" next to a page whose notice lists two missing files
+        // reads as a complete export. This is the F-01 shape one level down: the
+        // number is true and it still misleads.
+        const stats = { ...newStats(), totalPages: 19, totalAssets: 12, failedAssets: 2 };
+        reportSummary(stats, null, '/out/NB');
+
+        const out = said();
+        expect(out).toContain('Assets   failed: 2');
+        expect(out).toContain('Total Assets: 12 (2 could not be downloaded)');
+    });
+
+    it('still says Export complete! when only assets failed', () => {
+        // Nothing is missing from the vault, so the run did complete. The exit code
+        // agrees; the wording has to as well, or a clean run is mislabelled.
+        const stats = { ...newStats(), totalPages: 19, totalAssets: 12, failedAssets: 2 };
+        reportSummary(stats, null, '/out/NB');
+        expect(said()).toContain('Export complete!');
+    });
 });
 
 describe('newStats', () => {
     it('starts every counter at zero', () => {
+        // Pinned exactly, on purpose: a counter added here and not in the
+        // comparison is a counter nothing reports, which is the F-01 shape.
         expect(newStats()).toEqual({
             totalPages: 0, totalAssets: 0, failedPages: 0, failedSections: 0, failedGroups: 0,
+            failedAssets: 0,
         });
     });
 
@@ -87,5 +117,45 @@ describe('newStats', () => {
         const a = newStats();
         a.totalPages = 5;
         expect(newStats().totalPages).toBe(0);
+    });
+});
+
+describe('the exit code a finished export reports', () => {
+    // F-01, residual. The original finding was that `runExport` swallowed every
+    // error and a failed export exited 0. That was fixed. What was left is the
+    // same defect one level down: a run that lost pages, sections or groups
+    // printed "N item(s) could not be exported" and still exited 0, so a CI job
+    // went green over a vault with holes in it.
+    const { exitCodeForStats } = require('../src/exporter');
+
+    const withFailures = (o) => ({ ...newStats(), ...o });
+
+    it('is 0 for a clean run', () => {
+        expect(exitCodeForStats(newStats())).toBe(0);
+        expect(exitCodeForStats(withFailures({ totalPages: 19, totalAssets: 12 }))).toBe(0);
+    });
+
+    it('is 3 when a page is missing from the vault', () => {
+        expect(exitCodeForStats(withFailures({ failedPages: 1 }))).toBe(3);
+    });
+
+    it('is 3 when a section or group is missing', () => {
+        expect(exitCodeForStats(withFailures({ failedSections: 2 }))).toBe(3);
+        expect(exitCodeForStats(withFailures({ failedGroups: 1 }))).toBe(3);
+    });
+
+    it('is 0 for failed assets alone, because the note says which are missing', () => {
+        // The deliberate half of the severity split. Downloads fail routinely, so
+        // a code that is always set stops being read; and the note carrying the
+        // link also carries a notice naming the file that is not there (F-64).
+        expect(exitCodeForStats(withFailures({ totalAssets: 12, failedAssets: 2 }))).toBe(0);
+    });
+
+    it('is 3 even when most of the run succeeded', () => {
+        // The case that motivated the fix: a good export with a hole in it must
+        // not read as clean just because most of it worked.
+        expect(exitCodeForStats(withFailures({
+            totalPages: 11, totalAssets: 3, failedGroups: 1
+        }))).toBe(3);
     });
 });

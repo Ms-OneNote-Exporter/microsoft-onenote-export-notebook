@@ -51,5 +51,16 @@ if [ "$EXPORT_STATUS" -ne 0 ]; then
     echo "WARNING: check the log above and logs/app.log for what was skipped." >&2
 fi
 
+# Exit 3 means the export finished but some pages, sections or groups are
+# missing, which is not the same as exit 1 ("nothing usable came out"). Both are
+# worth the warning above, so both are reported the same way here - the container
+# still exits 0 either way, which is the whole point of capturing the status
+# rather than letting `set -e` discard a partial export.
+if [ "$EXPORT_STATUS" -eq 3 ]; then
+    echo "NOTE: the export completed with some pages, sections or groups missing." >&2
+    echo "NOTE: the notes that were written are complete, and name any asset" >&2
+    echo "NOTE: they refer to but could not download. Re-run to try again." >&2
+fi
+
 echo "Export completed successfully!"
 exit 0

@@ -529,6 +529,32 @@ describe('a page is never written with the previous page content', () => {
             fs.removeSync(outDir);
         }
     }, 120000);
+
+    itBrowser('and the run that lost it would exit 3, not 0', async () => {
+        // The two halves of the F-01 residual, joined: a real export path produces
+        // a failed page, and the counters it produces map to a non-zero exit. Each
+        // is tested on its own above; this is the assertion that the page loss and
+        // the exit code are actually connected, which is the thing that was broken.
+        const page = await browser.newPage();
+        const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'f01-'));
+
+        try {
+            await page.goto(fixture('stale-canvas.html'), { waitUntil: 'domcontentloaded' });
+
+            const stats = await exporter.exportContent({
+                contentFrame: page.mainFrame(),
+                notebookName: 'Stale Canvas Notebook',
+                options: { exportDir: outDir },
+                page
+            });
+
+            expect(stats.failedPages).toBeGreaterThan(0);
+            expect(exporter.exitCodeForStats(stats)).toBe(3);
+        } finally {
+            await page.close().catch(() => { });
+            fs.removeSync(outDir);
+        }
+    }, 120000);
 });
 
 describe('a page that renders is unaffected', () => {
