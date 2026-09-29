@@ -1,7 +1,7 @@
 const { Select } = require('enquirer');
 const logger = require('./utils/logger');
 const { listNotebooks, openNotebook, openNotebookByLink } = require('./navigator');
-const { getSections, getPages, selectSection, selectPage, getPageContent, navigateBack, isSectionLocked } = require('./scrapers');
+const { getSections, getPages, selectSection, selectPage, getPageContent, navigateBack, isSectionLocked, isGroupExpanded, readCanvasState } = require('./scrapers');
 const { createMarkdownConverter } = require('./parser');
 const { resolveInternalLinks } = require('./linkResolver');
 const { withRetry, permanent } = require('./utils/retry');
@@ -172,6 +172,198 @@ function waitForEnter(message) {
 }
 
 /**
+ * Normalises a page name for comparison.
+ *
+ * OneNote is not consistent about the whitespace or capitalisation of a page
+ * name between the navigation list and the canvas title, and this comparison has
+ * to survive that without being so loose that two different pages look alike.
+ *
+ * @param {string} value - Name from either place
+ * @returns {string} Comparable form
+ */
+function normalisePageName(value) {
+    return (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Decides whether the canvas is settled on the page that was asked for.
+ *
+ * A rendered canvas is not the same as the right canvas, and neither is a
+ * correctly-titled one. OneNote leaves the outgoing page's outlines in the DOM
+ * after a click, and clones whichever page is on screen while it transitions, so
+ * the canvas passes through:
+ *
+ *     [previous] -> [previous + previous] -> [] -> [wanted + wanted] -> [wanted]
+ *
+ * The requested title is already right while the content is still doubled, and
+ * getPageContent scrapes every outline it finds, so a wait that settles there
+ * writes the page twice into one note. Two checks are therefore needed, and both
+ * have to hold: the title must be the one that was asked for, and there must be
+ * exactly one of it.
+ *
+ * A page with no title outline at all is still a page that rendered, and refusing
+ * it would fail notes that used to export fine.
+ *
+ * This says the right page is on screen. It does not say the page is finished -
+ * see canvasSignature.
+ *
+ * @param {{outlines: number, titles: string[], images?: number, imagesReady?: number}} state - Canvas state
+ * @param {string} expectedTitle - Name of the page that was requested
+ * @returns {boolean} True when the canvas has settled on the requested page
+ */
+function isRequestedPageOnScreen(state, expectedTitle) {
+    if (!state || state.outlines === 0) return false;
+    if (!state.titles || state.titles.length === 0) return true;
+    // More than one title means a switch is still in progress, whichever page is
+    // being cloned.
+    if (state.titles.length > 1) return false;
+    return normalisePageName(state.titles[0]) === normalisePageName(expectedTitle);
+}
+
+/**
+ * Reduces canvas state to a string that changes while the page is still filling in.
+ *
+ * A title that matches is not the same as a finished page. OneNote settles the
+ * outlines first and fills in image sources a moment later, so a page can be
+ * correctly titled while its picture has nothing to download. Measured on the
+ * real notebook, a picture page reached
+ *
+ *     outlines=3  img=16/15    settled, but one image still has no source
+ *     outlines=3  img=16/16    the last image has loaded
+ *
+ * one polling step apart. Scrape at the first and the page exports with its
+ * picture silently missing - no error, a smaller file, and a note that looks
+ * complete.
+ *
+ * Waiting for two consecutive identical readings is the cheapest way to say "the
+ * page has stopped changing". On a page that is already finished it costs one
+ * poll interval, which is a far better trade than losing a picture with nothing
+ * to show for it.
+ *
+ * @param {{outlines: number, titles: string[], images?: number, imagesReady?: number}} state - Canvas state
+ * @returns {string} Comparable signature
+ */
+function canvasSignature(state) {
+    if (!state) return '';
+    return [
+        state.outlines,
+        (state.titles || []).length,
+        state.images || 0,
+        state.imagesReady || 0
+    ].join('/');
+}
+
+/**
+ * Describes what the canvas is actually showing, for an error message.
+ *
+ * A failure here is only diagnosable if it says what was there instead, so this
+ * is written for a user reading a log rather than for a parser.
+ *
+ * @param {{outlines: number, titles: string[]}} state - Canvas state
+ * @returns {string} Human-readable description
+ */
+function describeCanvas(state) {
+    if (!state || state.outlines === 0) return 'The canvas was empty.';
+    if (!state.titles || state.titles.length === 0) {
+        return `The canvas was showing a page with no title (${state.outlines} outlines).`;
+    }
+    if (state.titles.length > 1) {
+        // The clone transition: both pages are present at once.
+        const shown = state.titles.map((t) => `"${t.replace(/\s+/g, ' ').trim()}"`).join(' and ');
+        return `The canvas was still mid-switch, showing ${shown} at the same time (${state.outlines} outlines).`;
+    }
+    return `The canvas is showing "${state.titles[0].replace(/\s+/g, ' ').trim()}" instead.`;
+}
+
+/**
+ * Waits until the page that was asked for is the page on the canvas.
+ *
+ * OneNote tears the old page's content down before it builds the new one, so
+ * immediately after a page click the canvas is briefly empty, and there is a
+ * fixed 3s sleep standing between the click and the scrape. A page heavier than
+ * the rest (this one holds a full-page printout image) can still be mid-render
+ * when that sleep ends. The scraper then finds no outlines, falls back to a
+ * landmark whose only text is its own accessible name, and writes
+ *
+ *     \n\nPage Contents
+ *
+ * as the page. It was 15 bytes, it was reported as `Saved (0 assets)`, and the
+ * run finished declaring success. Two runs of the same notebook eleven hours
+ * apart produced opposite results for the same page, so the sleep is a race, not
+ * a reliable wait (F-61).
+ *
+ * Replacing the sleep with a plain "wait until any outline exists" is worse than
+ * either: the previous page's outlines never go away, so that returns instantly
+ * and writes the previous page's content under this page's name. What is needed
+ * is the page itself, settled - see isRequestedPageOnScreen, which also has to
+ * wait out the moment OneNote clones the incoming page and doubles its content,
+ * and canvasSignature, which has to wait out the images that load after it.
+ *
+ * Both conditions have to hold on two consecutive readings, so a page that is
+ * already correct still costs one poll interval rather than a fixed three
+ * seconds - and a slow page is waited out rather than cut off.
+ *
+ * @param {import('playwright').Frame} contentFrame - The notebook frame
+ * @param {string} expectedTitle - Name of the page that was requested
+ * @param {number} [timeoutMs] - How long to wait before giving up
+ * @returns {Promise<{outlines: number, titles: string[], images?: number, imagesReady?: number}>} The last state seen
+ */
+async function waitForPageContent(contentFrame, expectedTitle, timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs;
+    let state = { outlines: 0, titles: [] };
+    let lastSignature = null;
+
+    do {
+        state = await readCanvasState(contentFrame);
+        const signature = canvasSignature(state);
+
+        // Two conditions, and the second is what catches a page that is still
+        // loading its images: the right page has to be on screen AND nothing about
+        // it may have changed since the previous reading. A page that is already
+        // finished therefore costs exactly one extra poll.
+        if (isRequestedPageOnScreen(state, expectedTitle) && signature === lastSignature) {
+            return state;
+        }
+
+        lastSignature = signature;
+        await contentFrame.waitForTimeout(250);
+    } while (Date.now() < deadline);
+
+    return state;
+}
+
+/**
+ * Waits until a section group's children are readable.
+ *
+ * F-62, and the twin of F-61: a group that has not finished expanding returns an
+ * empty list, and an empty list used to mean "this group is empty" - so the whole
+ * subtree was skipped with a warning while the run went on to report success. A
+ * real run on 2026-09-29 lost eight pages that way and printed
+ * `Export complete!` with exit 0.
+ *
+ * A genuinely empty group is possible in OneNote, so this cannot be perfect. It
+ * waits the full budget first, and re-selects once, and only then treats zero as
+ * a failure: a spurious failure costs one line in the summary, while a missed
+ * expansion costs every page underneath it, silently.
+ *
+ * @param {import('playwright').Frame} contentFrame - The notebook frame
+ * @param {string} groupId - Id of the group whose children are wanted
+ * @param {number} [timeoutMs] - How long to wait before giving up
+ * @returns {Promise<number>} Items found; 0 means the group never expanded
+ */
+async function waitForGroupItems(contentFrame, groupId, timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs;
+
+    do {
+        const items = await getSections(contentFrame, groupId);
+        if (items.length > 0) return items.length;
+        await contentFrame.waitForTimeout(250);
+    } while (Date.now() < deadline);
+
+    return 0;
+}
+
+/**
  * Statistics for one export run.
  *
  * The `failed*` counters exist because every per-item error is caught and the
@@ -219,10 +411,44 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
             try {
                 logger.info(`Entering group: ${item.name}`);
-                await selectSection(contentFrame, item.id);
-                logger.info('Will wait 5 seconds to let the document load properly');
-                // Extra wait for the tree to expand
-                await contentFrame.waitForTimeout(5000);
+
+                // Clicking a group is a TOGGLE, not an action (F-62). OneNote
+                // publishes the state on the row as aria-expanded, so ask before
+                // clicking: a blind click closes a group that is already open, and
+                // that is how a whole subtree goes missing. This was measured on
+                // the real notebook:
+                //
+                //   fresh page load      aria-expanded=false  items=0
+                //   after selectSection  aria-expanded=true   items=2
+                //   after selectSection  aria-expanded=false  items=0   <- collapsed
+                //
+                // So: click only while it is collapsed, and re-click only if the
+                // row says it is still collapsed.
+                if (await isGroupExpanded(contentFrame, item.id) !== true) {
+                    await selectSection(contentFrame, item.id);
+                }
+
+                logger.info('Waiting for the group to expand...');
+                let groupItems = await waitForGroupItems(contentFrame, item.id);
+
+                if (groupItems === 0 && await isGroupExpanded(contentFrame, item.id) === false) {
+                    logger.warn(`      Group "${item.name}" was still collapsed; expanding it again...`);
+                    await selectSection(contentFrame, item.id);
+                    groupItems = await waitForGroupItems(contentFrame, item.id);
+                }
+
+                if (groupItems === 0) {
+                    // A group that yields nothing after being selected twice and
+                    // waited for has not expanded, and everything inside it is
+                    // being lost. That is a failure, not a warning: this is the
+                    // same trap as F-61, where a missing note was written as an
+                    // empty one and the run called it a success.
+                    throw new Error(
+                        'the group never expanded in OneNote, so the sections inside it ' +
+                        'were not exported. Re-run the export; if it keeps happening for ' +
+                        'this group, expand it by hand in OneNote first.'
+                    );
+                }
 
                 if (options.dodump) {
                     const dumpDir = await logger.getDumpDir();
@@ -383,8 +609,44 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
             try {
                 await selectPage(contentFrame, pageInfo.id);
-                logger.info('Will wait 3 seconds for page to render');
-                await contentFrame.waitForTimeout(3000);
+
+                // Wait for THIS page to be settled on the canvas, not for a number
+                // of seconds to pass (F-61). A fixed sleep is a race, and the page
+                // that lost it was written as a 15-byte stub reading
+                // "Page Contents" and reported as a success.
+                //
+                // Waiting only for outlines to exist is not a fix but a worse bug:
+                // OneNote leaves the previous page's outlines in the DOM, so that
+                // returns instantly and every page gets the one before it. Waiting
+                // only for the title is nearly as bad: OneNote clones the incoming
+                // page while it transitions, so the title is right while the content
+                // is doubled. Both the title and the absence of a second copy have
+                // to hold.
+                logger.info(`Waiting for "${pageInfo.name}" to settle on the canvas...`);
+                let state = await waitForPageContent(contentFrame, pageInfo.name);
+
+                if (!isRequestedPageOnScreen(state, pageInfo.name)) {
+                    // The first attempt can lose the race against a page OneNote
+                    // is still tearing down. Selecting it again starts the
+                    // transition over, which reliably recovers that case.
+                    logger.warn(`      "${pageInfo.name}" had not settled; selecting it again...`);
+                    await selectPage(contentFrame, pageInfo.id);
+                    state = await waitForPageContent(contentFrame, pageInfo.name);
+                }
+
+                if (!isRequestedPageOnScreen(state, pageInfo.name)) {
+                    // Refuse to write it. The alternative - the fallback in
+                    // getPageContent - writes a landmark's accessible name and
+                    // calls it a page, and there is no way for the user to tell
+                    // that apart from a real note. Failing means the summary
+                    // counts it and the run exits non-zero.
+                    throw new Error(
+                        'the page never settled on the canvas in OneNote, so nothing was written ' +
+                        `for it. ${describeCanvas(state)} ` +
+                        'Re-run the export; if it keeps happening for this page, it is worth ' +
+                        'opening the page by hand before exporting.'
+                    );
+                }
 
                 if (options.dodump) {
                     const dumpDir = await logger.getDumpDir();
@@ -393,6 +655,16 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 }
 
                 const content = await getPageContent(contentFrame);
+
+                // Belt and braces: the wait above and the scrape are two separate
+                // reads, and a frame can be replaced between them. A scrape that
+                // found nothing is the same failure, and must not be written.
+                if (content.outlinesFound === 0) {
+                    throw new Error(
+                        'the page content disappeared between waiting for it and reading it, ' +
+                        'so nothing was written for it. Re-run the export.'
+                    );
+                }
 
                 // Determine unique filename
                 const baseName = safeName(pageInfo.name, 'Untitled');
@@ -902,4 +1174,15 @@ module.exports = {
     // be run against a fixture without navigating to a real notebook.
     exportContent,
     findContentFrame,
+    // Exported for tests: the wait that replaced a fixed sleep, so a frame that
+    // renders late (or not at all) can be simulated without a 15s timeout.
+    waitForPageContentForTest: waitForPageContent,
+    waitForGroupItemsForTest: waitForGroupItems,
+    // Exported for tests: the predicate that decides "this is the page I asked
+    // for". It is the check that keeps a page from being written with the
+    // previous page's content, so it is worth testing directly.
+    isRequestedPageOnScreen,
+    // ...and the quiescence check, which is what keeps a page from being written
+    // before its images have loaded.
+    canvasSignature,
 };

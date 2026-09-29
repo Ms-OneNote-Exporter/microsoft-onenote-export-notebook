@@ -264,7 +264,16 @@ async function getPageContent(frame) {
             }
         }
 
-        // If no outlines found, fallback to more generic selectors
+        // If no outlines found, fallback to more generic selectors.
+        //
+        // `outlinesFound` is reported alongside so the caller can tell a real page
+        // from this one. An empty canvas is not an empty page: it is a page that
+        // has not finished rendering, and OneNote tears the old content down
+        // before it builds the new, so there is a window in which the canvas holds
+        // nothing at all. When that window is caught, `div[role="main"]` is a
+        // landmark whose only content is its own accessible name - literally
+        // "Page Contents" - and the fallback below wrote that as the page. A
+        // 15-byte note was the result, and the run called it a success (F-61).
         if (outlines.length === 0) {
             const fallback = document.querySelector('div[role="main"]') || document.querySelector('#OneNoteContent');
             if (fallback) {
@@ -272,6 +281,7 @@ async function getPageContent(frame) {
                 contentDiv.appendChild(clone);
             }
         }
+
 
         const attachmentInfos = [];
         const internalLinks = [];
@@ -620,7 +630,12 @@ async function getPageContent(frame) {
             attachments: attachmentInfos,
             internalLinks: internalLinks,
             videos: videoInfos,
-            embeds: embedInfos
+            embeds: embedInfos,
+            // How many content outlines the canvas actually held. A page always
+            // has at least a title outline, so zero means the canvas was empty -
+            // the page had not rendered yet, not that it was blank. The caller
+            // uses this to refuse to write a stub (F-61).
+            outlinesFound: outlines.length
         };
     });
 }
@@ -651,6 +666,104 @@ async function selectPage(frame, pageId) {
         operationName: 'Select page',
         silent: true
     });
+}
+
+/**
+ * Reads the state of the canvas: how many content outlines it holds, and the
+ * titles of the pages on it.
+ *
+ * Outlines alone cannot say which page is on screen. OneNote keeps the outgoing
+ * page's outlines in the DOM after a click, so "something is rendered" is true
+ * immediately and says nothing about *what*. Measured on the real notebook,
+ * waiting only on outline count gave the wrong page's content for 16 of 19 pages,
+ * and the run reported success.
+ *
+ * Every title is returned, not just the effective one, because the count is the
+ * signal that matters. A page switch goes:
+ *
+ *     outlines=3  titles=[previous]               still the old page
+ *     outlines=3  titles=[previous + previous]   the old page, cloned
+ *     outlines=0  titles=[]                       torn down
+ *     outlines=6  titles=[wanted + wanted]        the new page, cloned
+ *     outlines=3  titles=[wanted]                 settled
+ *
+ * The requested title is already correct two steps early, and the content is
+ * duplicated with it. Waiting for the title alone therefore scrapes the page
+ * twice into one note. Waiting for a single title outline is what lands on the
+ * settled state.
+ *
+ * @param {object} frame - The Playwright frame
+ * @returns {Promise<{outlines: number, titles: string[]}>} Canvas state
+ */
+async function readCanvasState(frame) {
+    return frame.evaluate(() => {
+        // Same root as getPageContent, deliberately: if these two disagree about
+        // which elements are the canvas, the wait can approve a page that the
+        // scrape then reads differently.
+        const canvas = document.querySelector('#OreoCanvas') ||
+            document.querySelector('.canvasContainer') ||
+            document.body;
+        const outlines = canvas.querySelectorAll('.OutlineContainer');
+        const titles = Array.from(outlines)
+            .filter((o) => o.querySelector('.TitleOutline'))
+            .map((o) => o.innerText.trim());
+
+        if (titles.length === 0) {
+            // Same fallback chain as getPageContent, for a page whose title is
+            // not an outline.
+            const el = document.querySelector('.pageTitle') ||
+                document.querySelector('div[aria-label*="Page Title"]') ||
+                document.querySelector('input[placeholder="Page Title"]');
+            const text = el ? (el.value || el.innerText || '').trim() : '';
+            if (text) titles.push(text);
+        }
+
+        // Media is counted because it arrives after the outlines do. OneNote
+        // settles an image outline first and fills in its source a moment later,
+        // so a scrape taken the instant the outlines stop changing finds a
+        // picture with nothing to download. Measured on the real notebook:
+        //
+        //   outlines=3  img=16/15   outlines settled, one image still has no src
+        //   outlines=3  img=16/16   the last image has loaded
+        //
+        // withNothing counts images that have no source at all, which is what
+        // tells the caller the page is still filling in.
+        const images = Array.from(canvas.querySelectorAll('img'));
+
+        return {
+            outlines: outlines.length,
+            titles,
+            images: images.length,
+            imagesReady: images.filter((i) => i.getAttribute('src')).length
+        };
+    });
+}
+
+/**
+ * Reads whether a section group is currently expanded.
+ *
+ * OneNote renders a group as a row carrying `aria-expanded`, and a `[role=group]`
+ * container of children only while it is open. That makes the state readable,
+ * which matters because selecting a group is a TOGGLE and not an action:
+ *
+ *     aria-expanded=false   click   ->  aria-expanded=true, children present
+ *     aria-expanded=true    click   ->  aria-expanded=false, children gone
+ *
+ * So a second click to "retry" a group that had already expanded closes it again.
+ * A real run lost eight pages to exactly that (F-62): the group was expanded,
+ * the first read raced, the retry collapsed it, and the exporter reported success
+ * with a whole subtree missing. Nothing should click a group without asking.
+ *
+ * @param {object} frame - The Playwright frame
+ * @param {string} groupId - Id of the group row
+ * @returns {Promise<boolean|null>} true/false, or null when the row is gone
+ */
+async function isGroupExpanded(frame, groupId) {
+    return frame.evaluate((id) => {
+        const row = document.getElementById(id);
+        if (!row) return null;
+        return row.getAttribute('aria-expanded') === 'true';
+    }, groupId);
 }
 
 /**
@@ -728,5 +841,7 @@ module.exports = {
     getPageContent,
     selectPage,
     navigateBack,
-    isSectionLocked
+    isSectionLocked,
+    isGroupExpanded,
+    readCanvasState
 };

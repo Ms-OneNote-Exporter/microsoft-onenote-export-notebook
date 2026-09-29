@@ -8,6 +8,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A section group that had not expanded no longer costs you its whole
+  subtree, silently** (F-62). A real run entered a group, found nothing in it,
+  logged a warning, and finished reporting `Export complete!` with exit 0 — eight
+  pages of the notebook simply absent.
+
+  Two separate faults, both found while verifying the fix below:
+
+  1. **A group that yields nothing was read as an empty group.** The exporter
+     warned, but the warning changed nothing anyone downstream could see, so a
+     whole subtree could vanish behind a successful-looking run.
+  2. **Selecting a group is a toggle, not an action.** Measured on the real
+     notebook:
+
+     ```
+     fresh page load       aria-expanded=false  items=0
+     after selectSection   aria-expanded=true   items=2
+     after selectSection   aria-expanded=false  items=0   <- collapsed again
+     ```
+
+     A retry that clicks without asking therefore *closes* the group it just
+     opened. OneNote publishes the state on the row, so the exporter now reads
+     `aria-expanded` and clicks only while the group is actually collapsed.
+
+  The export now waits for the group's children to be readable rather than
+  sleeping five seconds, re-clicks only if the row still says collapsed, and
+  **fails the group by name** — counted in the summary, non-zero exit — if the
+  children never appear. A missing group is visible; a silently empty one is not.
+
+- **A page that had not rendered is no longer written as a two-word note** (F-61).
+  One page of a real notebook exported as fifteen bytes:
+
+  ```
+  $ od -c "Section S1/Section1-Note1.1_PDFs.md"
+  0000000  \n  \n   P   a   g   e       C   o   n   t   e   n   t   s
+  ```
+
+  That page holds a full-page printout image and two attachments. Nothing about
+  the file says it is wrong — it has a name, a size, and no error anywhere: the
+  run logged `Saved (0 assets)` and finished declaring success. In Obsidian it
+  read simply as "Page Contents".
+
+  The cause was a fixed three-second sleep between selecting a page and scraping
+  it. OneNote tears the old page's content down before building the new one, so
+  the canvas is briefly empty, and a heavy page can still be mid-render when the
+  sleep ends. The scraper then found no content outlines, fell back to
+  `div[role="main"]` — an ARIA landmark whose only remaining text is its own
+  accessible name — and wrote that as the page. Two runs of the same notebook
+  eleven hours apart produced opposite results for the same page, which is what
+  identifies it as a race rather than a page that cannot be read.
+
+  The sleep is replaced by waiting for the requested page to actually be on the
+  canvas, and — because the sleep was load-bearing in a way that is easy to
+  miss — it is worth recording what the obvious replacements get wrong. Both of
+  these were shipped by an earlier attempt at this fix and measured on the real
+  notebook before being caught:
+
+  - **Waiting for *any* content to be present** returns immediately, because
+    OneNote does not clear the canvas when you click a page: the outgoing page's
+    outlines are still there. That gave 16 of 19 pages the previous page's text,
+    and the run reported success.
+  - **Waiting for the right *title*** is nearly as bad. OneNote clones whichever
+    page is on screen while it transitions, so the title is already correct while
+    the content is doubled:
+
+    ```
+    [previous] -> [previous + previous] -> [] -> [wanted + wanted] -> [wanted]
+    ```
+
+    A scrape taken at `[wanted + wanted]` writes the page **twice** into one note.
+
+  So the export now waits for a canvas that has the requested title, holds
+  exactly one copy of it, and has stopped changing — the last part because
+  OneNote fills in image sources *after* the outlines settle, one polling step
+  later, and scraping in that gap exports a page with its picture silently
+  missing.
+
+  If the page still has not settled, it is selected a second time — which
+  restarts the transition and reliably recovers the transient case — and if it
+  still has not, the page is **failed by name with nothing written at all**, and
+  the failure says what the canvas was actually showing. A missing note is
+  visible; a plausible-looking empty one, or one holding the wrong page's text, is
+  not.
+
+  The same check is applied to the scrape itself, because a frame can be replaced
+  between waiting for the content and reading it.
+
+  Verified on the real notebook: 19 pages, 12 assets, 3 internal links resolved
+  and 0 unresolved, with 14 of 19 notes byte-identical to a known-good earlier
+  run. The two-word page is now 35 words of real content. The section group that
+  used to lose eight pages also came back — its failure turned out to be a
+  symptom of the same desynchronised canvas.
+
 - **A file attachment is no longer downloaded once per part of itself** (F-60).
   OneNote does not draw a file attachment as a link. It draws a container holding
   an overlay, an icon and a filename label:

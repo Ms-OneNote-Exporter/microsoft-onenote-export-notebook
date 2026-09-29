@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<!--
+  Fixture: the canvas still showing the previous page (F-61).
+
+  OneNote does not clear the canvas when a page is clicked. The outgoing page's
+  outlines stay in the DOM, so for a while after the click the canvas is fully
+  rendered - just not showing the page that was asked for.
+
+  That is the trap. A wait that only asks "is anything rendered?" is satisfied
+  instantly, and the page is then written with its predecessor's content. This
+  was not theoretical: waiting on outline count alone gave 16 of 19 pages of a
+  real notebook the wrong text, every page in a section receiving the first
+  page's body, and the run finished declaring success with exit 0.
+
+  So the canvas here is rendered, and it is showing the wrong page. Only the
+  title says so, which is why the exporter waits on the title.
+
+  Nothing in this file reacts to clicks: the canvas is frozen on the previous
+  page, which is what makes it a fixture rather than a simulation.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>stale canvas fixture</title>
+<style>
+  .sectionListItem, .pageListItem { display: block; width: 320px; height: 26px; }
+  .navItem { display: block; width: 300px; height: 22px; }
+  .sectionList, .pageList { display: block; width: 340px; }
+</style>
+</head>
+<body>
+
+  <!-- ===== the section list ===== -->
+  <div class="sectionList">
+    <div id="11111111-1111-4111-8111-111111111111"
+         class="sectionListItem mainItem__item___AAAA" draggable="true">
+      <div class="navItem navItem__item____EEEE sectionItem" role="treeitem"
+           aria-label="Section One, Section. Selected." aria-selected="true"
+           data-tip="Section One" tabindex="0" data-selection-index="0">
+        <div class="mainItem__itemWrap___GGGG"></div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    ===== the page list, with the page that was requested =====
+
+    Two pages, and the second is the one the exporter will ask for. The canvas
+    below still shows the first.
+  -->
+  <div id="PageList" class="pageList">
+    <div class="pageNode" id="{aaaaaaaa-1111-4111-8111-111111111111}{1}">
+      <div class="pageListItem mainItem__item___AAAA" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" role="button"
+             aria-label="The Previous Page, page 1 of 2, Page. Selected."
+             aria-selected="true" data-tip="The Previous Page" tabindex="0"
+             data-selection-index="0">
+          <div class="mainItem__itemWrap___GGGG"></div>
+        </div>
+      </div>
+    </div>
+    <div class="pageNode" id="{aaaaaaaa-1111-4111-8111-111111111111}{2}">
+      <div class="pageListItem mainItem__item___AAAA" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" role="button"
+             aria-label="The Wanted Page, page 2 of 2, Page."
+             data-tip="The Wanted Page" tabindex="0" data-selection-index="1">
+          <div class="mainItem__itemWrap___GGGG"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    ===== the canvas: rendered, and showing the WRONG page =====
+
+    Four outlines, a real title, real body text. Every check that only asks
+    "is there content?" passes. The title is the one thing that does not.
+  -->
+  <div id="OreoCanvas">
+    <div class="OutlineContainer">
+      <div class="TitleOutline">The Previous Page</div>
+    </div>
+    <div class="OutlineContainer">
+      <div>THIS TEXT BELONGS TO THE PREVIOUS PAGE</div>
+    </div>
+    <div class="OutlineContainer">
+      <div>and so does this line</div>
+    </div>
+    <div class="OutlineContainer">
+      <div>the requested page has none of it</div>
+    </div>
+  </div>
+
+  <!--
+    ======================================================================
+    A second canvas, in a second fixture section, is NOT here on purpose.
+    The clone state below is exercised through the unit tests in
+    pageRender.test.js rather than a fixture, because it is a transient inside
+    a single click rather than a state a page can rest in, and freezing it
+    here would only test that a static file reads the same way twice.
+    ======================================================================
+  -->
+
+</body>
+</html>
