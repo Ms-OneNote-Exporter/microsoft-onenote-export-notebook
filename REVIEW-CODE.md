@@ -924,20 +924,31 @@ what happens", and the fix should have been a log line, not a throw.
 
 ### Next session, in priority order
 
-1. **F-44 / F-45 / F-46 — Docker.** `COPY . /app` instead of `git clone`, `npm ci`, pin the
+1. **F-64 — what a failed download looks like in the note.** The exporter rewrites
+   `data-local-file` to the final file name *before* attempting the download, so
+   a download that fails still leaves `[[assets/…]]` pointing at a file that was
+   never written. One occurrence in the last live run, against 8 broken links on
+   `main` before the F-61/F-63 work, so this is the last of that family rather
+   than a new one. Deliberately not fixed, because the two reasonable answers
+   change what the user's vault looks like and that is the user's call: leave the
+   filename as plain text, or emit a visible `⚠️ <name> (download failed)` so a
+   re-run has an obvious target. Leaning towards the marker — a silent plain-text
+   filename is the same shape of problem as the ones just fixed, where the note
+   did not tell you what went wrong.
+2. **F-44 / F-45 / F-46 — Docker.** `COPY . /app` instead of `git clone`, `npm ci`, pin the
    base image, non-root user, `.dockerignore`, `--init` + `/dev/shm` for Chromium; assert the
    export exit status in `entrypoint.sh`; fix the `oneexp_` vs `one-` name mismatch and the
    hardcoded sibling-repo path in `start-container.sh`. Self-contained, no product risk.
-2. **F-36 / F-37 — logger.** Add level gating (a `--verbose` flag, or honour an env var) and
+3. **F-36 / F-37 — logger.** Add level gating (a `--verbose` flag, or honour an env var) and
    move the log path out of `node_modules` for global installs. Touches every call site's
    behaviour, so it wants its own commit and a note in the README.
-3. **F-32 — per-attachment time budget.** Cap the retry × strategy multiplication, and record
+4. **F-32 — per-attachment time budget.** Cap the retry × strategy multiplication, and record
    per-strategy success counts so the ~72s Office Online path can be justified or dropped.
-4. **F-23 — extract the attachment heuristics** into a pure module with tests, now that the
+5. **F-23 — extract the attachment heuristics** into a pure module with tests, now that the
    harness exists. Biggest testability win, and a precondition for the fixture tests.
-5. **F-40 / F-48 — `auth.json` validation, 0600 dumps, close the browser on context failure.**
-6. **Duplicated `runExport` flow** (44% textual overlap) — only after the fixture tests exist.
-7. **README** (F-50) and the remaining Low/Info items.
+6. **F-40 / F-48 — `auth.json` validation, 0600 dumps, close the browser on context failure.**
+7. **Duplicated `runExport` flow** (44% textual overlap) — only after the fixture tests exist.
+8. **README** (F-50) and the remaining Low/Info items.
 
 ## 9. Open questions
 

@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-29
+
+Four fixes with one theme: **the export was writing wrong or missing data and
+reporting success.** Every one was found by running the export against a real
+notebook and comparing the result against a known-good run rather than by
+reading the code.
+
+| | Finding | Symptom |
+|---|---|---|
+| F-60 | One file attachment scraped once per part of itself | `report.pdf` *and* `report_1.pdf` |
+| F-61 | A page that had not rendered was written as a note | a 15-byte file reading `Page Contents` |
+| F-62 | A group that had not expanded was read as "empty" | 8 pages lost, `Export complete!`, exit 0 |
+| F-63 | The F-60 dedup dropped the attachment's link | files on disk, referenced by zero notes |
+
+Measured on the real notebook, before → after:
+
+| | before | after |
+|---|---|---|
+| pages exported | 11 | **19** |
+| links pointing at files never written | 8 | **1** |
+| duplicate `…_1` downloads | 5 | **0** |
+| internal links resolved | 0 of 3 | **3 of 3** |
+
 ### Fixed
 
 - **A section group that had not expanded no longer costs you its whole
@@ -419,4 +442,6 @@ Recorded in `REVIEW-CODE.md` with severity and evidence. The most relevant:
   a global install.
 - `--dodump` writes authenticated DOM to `logs/dumps` at mode 0644.
 
+[0.2.2]: https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/compare/v0.1.1...v0.2.0
