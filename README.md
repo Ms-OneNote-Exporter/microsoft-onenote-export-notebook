@@ -307,9 +307,37 @@ renders as an empty embed, and the only other trace is an `ERROR` line in
 
 | Code | Meaning |
 |------|---------|
-| `0` | Export completed |
+| `0` | Export completed — every page in the notebook was written |
 | `1` | Export failed (bad auth file, notebook not found, browser error, …) |
 | `2` | Usage error — for example `--non-interactive` without `--notebook` |
+| `3` | Export completed, but some pages, sections or groups are missing |
+
+`3` is deliberately not `1`. `1` means the export blew up and nothing usable came
+out, which is worth retrying from scratch. `3` means most of it is fine and some
+items are absent, where retrying would throw away a mostly-good vault. A
+supervisor can tell them apart, and a script that only checks "is it non-zero"
+keeps working either way.
+
+A run that exits `3` says what it lost:
+
+```
+Export finished with errors - 8 item(s) could not be exported.
+  Groups   failed: 1
+  Pages    failed: 7
+  See the errors above and logs/app.log for details.
+```
+
+**Assets that could not be downloaded do not make a run non-zero.** Downloads fail
+routinely — three strategies, a 30s cap, an Office Online round trip — and an exit
+code that is set on almost every run stops being read. The page referring to a
+missing file carries a notice naming it (see
+[Attachments can be slow, and sometimes fail](#attachments-can-be-slow-and-sometimes-fail)),
+and the summary counts them:
+
+```
+  Assets   failed: 2 (linked, but not downloaded - see the note)
+Total Assets: 12 (2 could not be downloaded)
+```
 
 Note the asymmetry with the container: `entrypoint.sh` deliberately **exits `0`
 even when the export fails**, so a partial export is kept rather than discarded.
