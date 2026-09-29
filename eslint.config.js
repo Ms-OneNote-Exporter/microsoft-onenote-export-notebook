@@ -60,6 +60,9 @@ const browserGlobals = {
     FileReader: 'readonly',
     Blob: 'readonly',
     Response: 'readonly',
+    // Used by the locale probe in auth-context.js, inside a page.evaluate.
+    navigator: 'readonly',
+    Intl: 'readonly',
 };
 
 module.exports = [
@@ -68,7 +71,7 @@ module.exports = [
     },
     {
         // Files that scrape the DOM: their evaluate() callbacks run in the browser.
-        files: ['src/scrapers.js', 'src/navigator.js', 'src/diagnose-*.js', 'src/exporter.js'],
+        files: ['src/scrapers.js', 'src/navigator.js', 'src/diagnose-*.js', 'src/exporter.js', 'src/auth-context.js'],
         languageOptions: {
             globals: { ...nodeGlobals, ...browserGlobals },
         },

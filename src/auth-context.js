@@ -7,6 +7,83 @@ const logger = require('./utils/logger');
 const REQUIRED_KEYS = ['cookies', 'origins'];
 
 /**
+ * The language the export asks Microsoft for.
+ *
+ * F-33: the Office Online download menu is driven by UI text, and the selectors
+ * in downloadStrategies.js are English and French only. Left to itself, Chromium
+ * sends the *system* locale - Playwright's `locale` option "defaults to the system
+ * default locale" - so the same tool could work on a developer's laptop and fail
+ * on a colleague's, for reasons the log never mentioned.
+ *
+ * Two settings, because they reach two different clients:
+ *
+ * - `locale` sets navigator.language and Intl, and Playwright merges it into
+ *   Accept-Language for browser requests. It does NOT reach `context.request`,
+ *   which is what actually downloads the files: BrowserContextAPIRequestContext
+ *   copies userAgent, extraHTTPHeaders, proxy and baseURL into its defaults and
+ *   omits locale. So the header is also set explicitly, in extraHTTPHeaders,
+ *   which that client does inherit.
+ *
+ * This is the signal this tool controls, not the whole answer. Microsoft for the
+ * web takes its display language from the signed-in profile, and Office Online
+ * additionally takes `lc`/`mkt` from the WOPI URL the SharePoint host appends.
+ * An account whose language is not English can still render a non-English menu;
+ * logBrowserLocale() below exists so that case says so instead of appearing as
+ * "0 selector matches".
+ */
+const EXPORT_LOCALE = 'en-US';
+const ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
+
+/**
+ * Builds the options for browser.newContext().
+ *
+ * Extracted from getAuthenticatedContextWithFile so the pinning is assertable
+ * without launching a browser - the point of the test is that the header lives
+ * in extraHTTPHeaders, which is the difference between the download client
+ * speaking English and the pages only.
+ *
+ * @param {string} authFilePath - Path to the storageState JSON
+ * @returns {object} Options for browser.newContext()
+ */
+function buildContextOptions(authFilePath) {
+    return {
+        storageState: authFilePath,
+        locale: EXPORT_LOCALE,
+        extraHTTPHeaders: { 'Accept-Language': ACCEPT_LANGUAGE },
+    };
+}
+
+/**
+ * Reports the language the browser actually ended up using, once, from a live page.
+ *
+ * navigator.language is a browser-level property, so this needs no navigation
+ * and cannot be slow - it is called immediately after the first page is created.
+ * A disagreement with the pinned locale means something else decided the UI
+ * language, which is exactly what a failed Office Online selector needs to say.
+ *
+ * Diagnostics only: any failure is swallowed, because an unreadable locale must
+ * never fail an export.
+ *
+ * @param {object} page - A Playwright Page
+ */
+async function logBrowserLocale(page) {
+    try {
+        const seen = await page.evaluate(() => ({
+            language: navigator.language,
+            intl: Intl.DateTimeFormat().resolvedOptions().locale,
+        }));
+
+        logger.info(
+            `Browser language: navigator.language=${seen.language}, Intl=${seen.intl} ` +
+            `(requested ${EXPORT_LOCALE}). If a download-menu selector fails, this is the ` +
+            'language the page came up in.'
+        );
+    } catch (e) {
+        logger.debug(`Could not read the browser language: ${e.message}`);
+    }
+}
+
+/**
  * Checks that a file looks like a Playwright storageState before handing it to
  * the browser.
  *
@@ -124,7 +201,7 @@ async function getAuthenticatedContextWithFile(authFilePath, headless = true) {
 
     const browser = await chromium.launch({ headless });
     try {
-        const context = await browser.newContext({ storageState: authFilePath });
+        const context = await browser.newContext(buildContextOptions(authFilePath));
         return { browser, context };
     } catch (e) {
         // newContext can still fail (a revoked session, a Playwright version
@@ -138,4 +215,4 @@ async function getAuthenticatedContextWithFile(authFilePath, headless = true) {
     }
 }
 
-module.exports = { getAuthenticatedContextWithFile, readStorageState };
+module.exports = { getAuthenticatedContextWithFile, readStorageState, buildContextOptions, logBrowserLocale, EXPORT_LOCALE };

@@ -808,7 +808,7 @@ which also records the diagnosis I got wrong first.
 
 | **F-65** | **High** | `exporter.js:1108` | **Fixed.** F-01's residual, one level down: a run that lost pages, sections or groups printed `Export finished with errors - N item(s) could not be exported` and **still exited `0`**. The summary was truthful and nothing acted on it, so a CI job could go green over a vault with holes in it. Not hypothetical — this session's own F-62 verification run lost 8 pages that way | **fixed** — a pure `exitCodeForStats()` returns `3` when pages, sections or groups are missing, and `runExport` applies it. `3` rather than reusing `1`, because the two call for opposite responses: `1` is "nothing usable came out, retry from scratch", `3` is "mostly fine, some items absent", where retrying would discard a good vault. Failed *assets* deliberately do not change the exit code — downloads fail routinely, so a code set on nearly every run stops being read; they are counted in the summary and named in the note instead. A run whose tab died still exits `1`, since that is an unknown fraction rather than a known partial |
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
-| F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
+| F-33 | Medium | `downloadStrategies.js:136-172`, `auth-context.js` | Office Online automation is EN/FR only, and nothing pinned the language | **partly fixed** — `auth-context.js` now pins `locale: 'en-US'` **and** `Accept-Language` in `extraHTTPHeaders`, and logs the language the page actually came up in. Verified against real Chromium: `locale` reaches the page but **not** `context.request`, which is the client that downloads the files, so the header has to be set in both places. **Still open:** an account whose language is not English can still render a non-English menu, because M365 takes the UI language from the profile and Office Online additionally from the `lc`/`mkt` parameters the SharePoint host appends. What the fix buys is that the tool stops depending on the operator's OS language, and that a failure now says which language the page was in |
 | F-36 | Medium | `logger.js:139` | No log-level gating: `debug` always prints and the log grows unbounded | **fixed** — `--verbose`/`--quiet` + `ONENOTE_EXPORT_LOG_LEVEL`, default hides debug; rotates at 5 MB |
 | F-37 | Medium | `logger.js:8` | Log path lands inside `node_modules` for the documented global install | **fixed** — XDG state dir for global installs, `ONENOTE_EXPORT_LOG_DIR` override |
 | F-40 | Medium | `auth-context.js:16` | No `storageState` validation; leaked browser if context creation fails | **fixed** — validated pre-launch, browser closed on context failure, loose-permission warning |
@@ -907,8 +907,36 @@ all Low/Info items · `npm test` real tests + CI workflow.
 | `4e8d065` | **Regression from `d878ceb` reverted** (F-21 was wrong), **F-51** blob URLs, **F-52** asset name reservation, **F-53** data: URL validation, CI installs Chromium |
 | `b77417f` | **F-32 partly fixed** — permanent failures skip the retry backoff; `maxAttempts` deliberately unchanged |
 
-**Fixed: 1 Critical, 6 High, 10 Medium, 14 Low/Info.** Open: F-23, F-32 (time budget), F-33,
-F-36, F-37, F-40, F-44, F-45, F-46, F-47, F-48 and the Low/Info tail.
+**F-33 — the language the tool asks Microsoft for (2026-09-29).** The Office Online
+download menu is selected by UI text that exists in English and French only, and
+Playwright's `locale` option "defaults to the system default locale", so the export
+was sending the operator's OS language to Microsoft. Pinned `en-US`, and set
+`Accept-Language` in `extraHTTPHeaders` as well — because, verified against real
+Chromium rather than read out of the Playwright source, `locale` reaches the page but
+**not** `context.request`, and `context.request` is what downloads every file:
+
+```
+de-DE context, unpinned:     page  Accept-Language = de-DE      context.request = (absent)
+buildContextOptions():       page  Accept-Language = en-US      context.request = en-US,en;q=0.9
+```
+
+`navigator.language` is a browser-level property, so logging it needs no navigation
+and costs nothing; the line is the answer to "0 selector matches" when an account
+renders a non-English menu. The honest limit, and the reason this is *partly* fixed:
+M365 takes the UI language from the signed-in profile, and Office Online additionally
+from the `lc`/`mkt` parameters the SharePoint host appends to the WOPI URL. Nothing in
+this codebase touches those, and forcing a header does not override an account setting.
+
+**Fixed: 1 Critical, 6 High, 10 Medium, 14 Low/Info.** The Open line above is stale —
+F-33, F-36, F-37, F-40, F-44, F-45, F-46, F-47 and F-48 are all fixed; the register rows
+are the authority, and the §8a "next session" list below is the part that needs updating.
+
+**Standing as of 2026-09-29**, Medium → Low, verified against `4559a90`:
+
+| Sev | Findings |
+|-----|----------|
+| Medium | F-23 (attachment heuristics untestable, `fileExtRegex` twice) · F-33 residual (account-driven UI language) · F-32 residual (30 s cap in, no per-strategy stats) · F-02 (scraper diagnostics cannot reach `app.log`) · F-22 residual (`getSections` returns `[]` with no reason) |
+| Low/Info | F-18, F-19, F-27, F-28, F-35, F-38 residual, F-43, F-49, F-54 · plus the untriaged §6 items: `processSections`' 8 positional parameters and mutable default `stats`, `openNotebook`'s leaked listing page, the download popups that leak on the error path, `linkResolver`'s case-folding and second full read/write pass, and 15 remaining fixed sleeps |
 
 ### Lesson worth keeping (from F-21)
 
