@@ -817,7 +817,7 @@ which also records the diagnosis I got wrong first.
 | F-47 | Medium | `exporter.js:31` | Authenticated GET to a host chosen by page content | **fixed (warn, by decision)** — classified and logged once per host; nothing blocked |
 | F-48 | Medium | `logger.js:38` | `--dodump` writes authenticated DOM at 0644 | **fixed** — dirs 0700, files 0600, existing app.log tightened at startup |
 | F-22 | Medium | `scrapers.js`, `exporter.js:483` | A section lookup returned `[]` with no reason, so "this group is empty" and "I never found its container" were indistinguishable | **fixed** — `getSections` returns `{ items, reason }` (`no-parent` / `no-container` / `empty`), and `emptyLookupWarning` turns the reason into a warning that names the remedy. A genuinely empty group is now silent, which is the one case where the old message was pure noise |
-| F-23 | Medium | `scrapers.js:302` | 20+ untestable inline heuristics; extension regex duplicated 3× | open |
+| F-23 | Medium | `scrapers.js`, `attachmentNames.js` | 20+ untestable inline heuristics; the 19-extension list was written out **3×** in one `evaluate()` callback, with nothing keeping the copies equal | **partly fixed** — `attachmentNames.js` owns the list, the pattern and the name-preference order, with 21 tests; the three copies are now one definition, passed into the page as a regex *source string* and rebuilt there. **Left open by design:** the heuristics that need a live DOM (`fileOwner`'s ancestor walk, `fileLabel`, the real-element match) cannot leave the callback, because Playwright serialises it into the browser and a `require` there throws. Injecting them as source text to rebuild with `new Function` would make them Node-testable at the cost of `eval` against a Microsoft login page — not a trade worth making for a filename heuristic |
 | F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11 | Low/Info | various | Dead code, empty catches, `no-cond-assign`, unused params, useless escapes | **fixed** `a306c9d` |
 | F-41 | Low | `config.js:11,17` | `USER_DATA_DIR` exported, never imported | **fixed** — dead export removed |
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | **fixed** — marked handled at creation, awaited later |
@@ -935,7 +935,7 @@ are the authority, and the §8a "next session" list below is the part that needs
 
 | Sev | Findings |
 |-----|----------|
-| Medium | F-23 (attachment heuristics untestable, `fileExtRegex` twice) · F-33 residual (account-driven UI language) |
+| Medium | F-33 residual (M365 takes its UI language from the account profile, so a non-English account can still render a non-English download menu) · F-23 residual (the DOM-bound heuristics cannot leave the browser callback) |
 | Low/Info | F-18, F-19, F-27, F-28, F-35, F-38 residual, F-43, F-49, F-54 · plus the untriaged §6 items: `processSections`' 8 positional parameters and mutable default `stats`, `openNotebook`'s leaked listing page, the download popups that leak on the error path, `linkResolver`'s case-folding and second full read/write pass, and 15 remaining fixed sleeps |
 
 ### Lesson worth keeping (from F-21)
