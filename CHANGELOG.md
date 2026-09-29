@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The file-extension list that decides what is an attachment is now written
+  once, and is tested.** It appeared three times in the same function, each copy
+  carrying the same 19 alternatives, with nothing keeping them equal — and
+  nothing testing any of them. A rule this central to which files get downloaded
+  was only ever exercised by running a real export.
+
+  The list, the pattern it builds, and the order the visible attributes are
+  consulted in now live in `src/attachmentNames.js` with 21 tests covering them.
+  That includes the two cases that decide real behaviour: a truncated OneNote
+  label (`Complete_Paris_9th_...6P4`) must **not** count as a filename, and
+  `report.pdf.xlsx` must.
+
+  This changes what the scraper recognises: the pre-2007 Office extensions
+  `.doc`, `.xls` and `.ppt` are now included alongside the modern ones. A note
+  from 2007 has the old ones, and a list with only the modern extensions would
+  treat those attachments as hyperlinks and quietly not download them. Nothing
+  else about the scrape changes, so a notebook that exported correctly before
+  exports identically.
+
+  The heuristics that need a live DOM — the ancestor walk that decides which
+  element *is* a file, and the match that finds the clickable one — stay inside
+  the browser callback. They cannot move: Playwright serialises that callback and
+  runs it in the page, where `require` does not exist.
+
 - **Scraper diagnostics now reach `logs/app.log`.** The attachment heuristics run
   inside a callback that Playwright serialises and executes in the browser, where
   a Node module is not in scope, so they logged to the browser console. During an

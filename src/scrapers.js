@@ -10,6 +10,10 @@
 // frame and only ever *read* from it can use the logger normally.
 const logger = require('./utils/logger');
 const { withRetry } = require('./utils/retry');
+// The filename rules live in a Node module so they can be tested, and reach the
+// page below as *data* - see the note in attachmentNames.js for why they cannot
+// simply be imported into an evaluate() callback.
+const { fileExtensionPatternSource, ATTACHMENT_NAME_FIELDS } = require('./attachmentNames');
 
 /**
  * Scrapes the list of sections and section groups from the current notebook view.
@@ -231,7 +235,14 @@ async function selectSection(frame, sectionId) {
  * @returns {Promise<object>} { title, contentHtml, images, attachments, ..., diagnostics }
  */
 async function getPageContent(frame) {
-    const content = await frame.evaluate(() => {
+    const content = await frame.evaluate(({ extensionPattern, nameFields }) => {
+        // Rebuilt from the pattern the Node module produced, rather than written
+        // out here. This callback is serialised into the browser, so it cannot
+        // require() that module - but it can be handed the answer as a string and
+        // rebuild the RegExp, which is the one part of a regex that survives
+        // serialisation. One definition, three uses.
+        const fileExtRegex = new RegExp(extensionPattern, 'i');
+
         // Diagnostics collected here, logged by the caller. See the note above:
         // the Node logger does not exist in this context.
         const diagnostics = [];
@@ -371,10 +382,6 @@ async function getPageContent(frame) {
             }
 
             const isSharePoint = href.includes('sharepoint.com') || href.includes('1drv.ms') || href.includes('onedrive.live.com');
-
-            // Extension check helper (cases like "file.pdf" or "file.pdf.xlsx")
-            // Broadened to search ANYWHERE in string (handles ?web=1 or Doc2.aspx?file=...)
-            const fileExtRegex = /\.(docx?|xlsx?|pptx?|pdf|txt|md|csv|zip|rar|7z|json|xml|log|png|jpe?g|gif|svg)(\?|&|$)/i;
 
             const isCloud = (className.includes('hyperlinkv2') || className.includes('cloudfile') || className.includes('onedrive') || parentClass.includes('cloudfile')) &&
                 isSharePoint;
@@ -520,15 +527,23 @@ async function getPageContent(frame) {
 
                 const attachId = `file_${attachmentInfos.length}`;
 
-                // Prioritize full names from attributes (OneNote Web often truncates link text)
+                // Prioritize full names from attributes (OneNote Web often truncates
+                // link text). The preference order is data from attachmentNames.js
+                // rather than a sequence of ifs, so it can be read as a preference
+                // and tested as one. Only the first line of `text` counts: OneNote
+                // renders a file's text as "report.pdf 1.2 MB 3 Sep", and that
+                // string is not a filename.
                 const ariaLabel = link.getAttribute('aria-label') || '';
-                // Use strict regex to avoid matching truncated text like "...6P4" as an extension
-                const fileExtRegex = /\.(docx?|xlsx?|pptx?|pdf|txt|md|csv|zip|rar|7z|json|xml|log|png|jpe?g|gif|svg)(\?|&|$)/i;
+                const attributes = { title, ariaLabel, text };
 
                 let originalName = '';
-                if (fileExtRegex.test(title)) originalName = title;
-                else if (fileExtRegex.test(ariaLabel)) originalName = ariaLabel;
-                else if (fileExtRegex.test(text.split('\n')[0].trim())) originalName = text.split('\n')[0].trim();
+                for (const field of nameFields) {
+                    const value = (attributes[field] || '').split('\n')[0].trim();
+                    if (fileExtRegex.test(value)) {
+                        originalName = value;
+                        break;
+                    }
+                }
 
                 // Collected here and logged by the caller; see the note at the top
                 // of getPageContent. The element shape and the attributes are
@@ -554,8 +569,12 @@ async function getPageContent(frame) {
                                 if (fileExtRegex.test(lastPart)) {
                                     originalName = lastPart;
                                 } else {
-                                    // Look for the extension earlier in the URL (SharePoint style)
-                                    const match = href.match(/([^/]+\.(docx?|xlsx?|pptx?|pdf|txt|md|csv|zip|rar|7z|json|xml|log|png|jpe?g|gif|svg))(?:\?|&|$)/i);
+                                    // Look for the extension earlier in the URL (SharePoint
+                                    // style), using the same one list: a second copy of the
+                                    // extensions here is a third place for them to drift,
+                                    // and this is the branch that decides the name when a
+                                    // file is linked through a SharePoint redirect.
+                                    const match = new RegExp(`([^/]+${extensionPattern})`, 'i').exec(href);
                                     if (match) originalName = match[1];
                                 }
                             }
@@ -733,6 +752,9 @@ async function getPageContent(frame) {
             // of this function.
             diagnostics
         };
+    }, {
+        extensionPattern: fileExtensionPatternSource(),
+        nameFields: ATTACHMENT_NAME_FIELDS
     });
 
     // The Node side, where the logger exists. Every scraper diagnostic now lands
