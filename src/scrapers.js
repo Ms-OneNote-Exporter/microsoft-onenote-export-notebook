@@ -264,7 +264,16 @@ async function getPageContent(frame) {
             }
         }
 
-        // If no outlines found, fallback to more generic selectors
+        // If no outlines found, fallback to more generic selectors.
+        //
+        // `outlinesFound` is reported alongside so the caller can tell a real page
+        // from this one. An empty canvas is not an empty page: it is a page that
+        // has not finished rendering, and OneNote tears the old content down
+        // before it builds the new, so there is a window in which the canvas holds
+        // nothing at all. When that window is caught, `div[role="main"]` is a
+        // landmark whose only content is its own accessible name - literally
+        // "Page Contents" - and the fallback below wrote that as the page. A
+        // 15-byte note was the result, and the run called it a success (F-61).
         if (outlines.length === 0) {
             const fallback = document.querySelector('div[role="main"]') || document.querySelector('#OneNoteContent');
             if (fallback) {
@@ -272,6 +281,7 @@ async function getPageContent(frame) {
                 contentDiv.appendChild(clone);
             }
         }
+
 
         const attachmentInfos = [];
         const internalLinks = [];
@@ -355,6 +365,95 @@ async function getPageContent(frame) {
         const realPotentialLinks = Array.from(canvas.querySelectorAll('a, div[title], span[title], button[title]'));
 
         const processedFileSignatures = new Set();
+        const claimedFileOwners = new Set();
+
+        /**
+         * The element that *is* the file, as opposed to a piece of it.
+         *
+         * OneNote does not render a file attachment as a link. It renders a
+         * container element holding several parts - an overlay, an icon, and a
+         * visible filename label - and more than one of those parts matches the
+         * attachment pattern above:
+         *
+         *     div.WACEFContainer[role=link][aria-label="report.pdf"]
+         *       span.WACEFOverlay[title="report.pdf"]     <- the click target
+         *       img.WACEFImage[title="report.pdf"]
+         *       div.WACEFFilename[title="report.pdf"]    <- the label
+         *
+         * So one PDF was scraped as two attachments, which meant two download
+         * attempts for the same bytes and two near-identical files on disk
+         * (report.pdf and report_1.pdf). Worse, the duplicate is the one that
+         * looks healthy: the click-target marker is placed by a fuzzy title
+         * match that lands on the *other* candidate, so the first one was
+         * reported as "Could not find clickable element" and could never be
+         * fetched at all. A real run spent 30s a page proving it (F-60).
+         *
+         * So a candidate whose ancestor names the same file is a part of that
+         * ancestor's attachment, not a file of its own, and is skipped. The test
+         * is deliberately narrow: the ancestor must name THIS candidate's file.
+         * Two different files that share markup shape have separate containers
+         * and both survive, and a hyperlink the author added on purpose - a
+         * SharePoint link to a file also attached above - names no ancestor at
+         * all, so it remains its own attachment.
+         *
+         * @param {Element} el - A candidate that matched the attachment pattern
+         * @returns {Element} The element that owns the file
+         */
+        const fileOwner = (el) => {
+            const labelOf = (node) => (
+                (node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title'))) || ''
+            ).trim().toLowerCase();
+            const own = labelOf(el);
+            // Nothing names this element, so nothing can own it either.
+            if (!own) return el;
+
+            let owner = null;
+            for (let p = el.parentElement; p; p = p.parentElement) {
+                const label = labelOf(p);
+                if (label && (label === own || label.startsWith(own))) owner = p;
+            }
+            return owner || el;
+        };
+
+        /**
+         * The element inside a file's container that actually shows the file's name.
+         *
+         * This exists because of a turndown rule that looks like it works and does
+         * not. `data-local-file` becomes the Obsidian embed via a custom rule (see
+         * parser.js), but turndown answers a *blank* node from its built-in blank
+         * rule and never consults custom rules at all:
+         *
+         *     Rules.prototype.forNode = function (node) {
+         *       if (node.isBlank) return this.blankRule
+         *       ...
+         *
+         * OneNote's overlay is an empty element, so an id stamped on it produces no
+         * embed, silently. Turning the attachment fixture through the real converter
+         * shows it exactly:
+         *
+         *     Quarterly Report            <- id was on the empty overlay: no embed
+         *     Meeting Notes               <- same
+         *     [[assets/file_2.pdf]]       <- has text: embed
+         *     [[assets/file_3.pdf]]       <- has text: embed
+         *
+         * So the element that carries the name has to carry the id. Before the
+         * F-60 dedup this happened by luck: the overlay was scraped first and the
+         * visible label second, and the *second* candidate's id was the one that
+         * produced the embed. Deduplicating to a single attachment kept the first,
+         * and the link went with it - the file downloaded and the note stopped
+         * referring to it (F-63).
+         *
+         * @param {Element} owner - The container that owns the file
+         * @returns {Element|null} The element showing the name, or null if none does
+         */
+        const fileLabel = (owner) => {
+            if (!owner) return null;
+            if ((owner.innerText || '').trim()) return owner;
+            for (const c of owner.querySelectorAll('a, div[title], span[title], button[title]')) {
+                if ((c.innerText || '').trim()) return c;
+            }
+            return null;
+        };
 
         allPotentialLinks.forEach((link) => {
             const href = link.getAttribute('href') || '';
@@ -364,6 +463,13 @@ async function getPageContent(frame) {
             const { isFile, isCloud } = isFileLink(link);
 
             if (isFile) {
+                // F-60: several candidates can be one file. Keep the first, which
+                // in OneNote's markup is the overlay - the part OneNote actually
+                // makes clickable - and drop the rest.
+                const owner = fileOwner(link);
+                if (claimedFileOwners.has(owner)) return;
+                claimedFileOwners.add(owner);
+
                 // Deduplicate by href (if present) or by title+text
                 const signature = href || (`${title}_${text}`);
                 if (processedFileSignatures.has(signature)) return;
@@ -423,8 +529,18 @@ async function getPageContent(frame) {
                 // eslint-disable-next-line no-console
                 console.debug(`[Scraper] Detected attachment: ${originalName} (ID: ${attachId}, Type: ${link.tagName})`);
                 attachmentInfos.push({ id: attachId, src: href, originalName: originalName, isCloud: isCloud });
-                link.setAttribute('data-local-file', attachId);
-                link.setAttribute('data-filename', originalName);
+
+                // The id goes on the element that SHOWS the name, not on whichever
+                // part of the container happened to be scraped first (F-63). The
+                // two are different jobs and F-60 conflated them: the overlay is
+                // what OneNote makes clickable, and the label is what the reader
+                // sees - and turndown renders an embed only for the second, because
+                // an empty element never reaches a custom rule. Getting this wrong
+                // is invisible in every count the summary reports: the file still
+                // downloads, and only the note stops linking to it.
+                const label = fileLabel(owner) || link;
+                label.setAttribute('data-local-file', attachId);
+                label.setAttribute('data-filename', originalName);
 
                 // Tag the REAL element for clicking
                 // Match by exact href first, then fuzzy href, then title, then fuzzy text
@@ -564,7 +680,12 @@ async function getPageContent(frame) {
             attachments: attachmentInfos,
             internalLinks: internalLinks,
             videos: videoInfos,
-            embeds: embedInfos
+            embeds: embedInfos,
+            // How many content outlines the canvas actually held. A page always
+            // has at least a title outline, so zero means the canvas was empty -
+            // the page had not rendered yet, not that it was blank. The caller
+            // uses this to refuse to write a stub (F-61).
+            outlinesFound: outlines.length
         };
     });
 }
@@ -595,6 +716,104 @@ async function selectPage(frame, pageId) {
         operationName: 'Select page',
         silent: true
     });
+}
+
+/**
+ * Reads the state of the canvas: how many content outlines it holds, and the
+ * titles of the pages on it.
+ *
+ * Outlines alone cannot say which page is on screen. OneNote keeps the outgoing
+ * page's outlines in the DOM after a click, so "something is rendered" is true
+ * immediately and says nothing about *what*. Measured on the real notebook,
+ * waiting only on outline count gave the wrong page's content for 16 of 19 pages,
+ * and the run reported success.
+ *
+ * Every title is returned, not just the effective one, because the count is the
+ * signal that matters. A page switch goes:
+ *
+ *     outlines=3  titles=[previous]               still the old page
+ *     outlines=3  titles=[previous + previous]   the old page, cloned
+ *     outlines=0  titles=[]                       torn down
+ *     outlines=6  titles=[wanted + wanted]        the new page, cloned
+ *     outlines=3  titles=[wanted]                 settled
+ *
+ * The requested title is already correct two steps early, and the content is
+ * duplicated with it. Waiting for the title alone therefore scrapes the page
+ * twice into one note. Waiting for a single title outline is what lands on the
+ * settled state.
+ *
+ * @param {object} frame - The Playwright frame
+ * @returns {Promise<{outlines: number, titles: string[]}>} Canvas state
+ */
+async function readCanvasState(frame) {
+    return frame.evaluate(() => {
+        // Same root as getPageContent, deliberately: if these two disagree about
+        // which elements are the canvas, the wait can approve a page that the
+        // scrape then reads differently.
+        const canvas = document.querySelector('#OreoCanvas') ||
+            document.querySelector('.canvasContainer') ||
+            document.body;
+        const outlines = canvas.querySelectorAll('.OutlineContainer');
+        const titles = Array.from(outlines)
+            .filter((o) => o.querySelector('.TitleOutline'))
+            .map((o) => o.innerText.trim());
+
+        if (titles.length === 0) {
+            // Same fallback chain as getPageContent, for a page whose title is
+            // not an outline.
+            const el = document.querySelector('.pageTitle') ||
+                document.querySelector('div[aria-label*="Page Title"]') ||
+                document.querySelector('input[placeholder="Page Title"]');
+            const text = el ? (el.value || el.innerText || '').trim() : '';
+            if (text) titles.push(text);
+        }
+
+        // Media is counted because it arrives after the outlines do. OneNote
+        // settles an image outline first and fills in its source a moment later,
+        // so a scrape taken the instant the outlines stop changing finds a
+        // picture with nothing to download. Measured on the real notebook:
+        //
+        //   outlines=3  img=16/15   outlines settled, one image still has no src
+        //   outlines=3  img=16/16   the last image has loaded
+        //
+        // withNothing counts images that have no source at all, which is what
+        // tells the caller the page is still filling in.
+        const images = Array.from(canvas.querySelectorAll('img'));
+
+        return {
+            outlines: outlines.length,
+            titles,
+            images: images.length,
+            imagesReady: images.filter((i) => i.getAttribute('src')).length
+        };
+    });
+}
+
+/**
+ * Reads whether a section group is currently expanded.
+ *
+ * OneNote renders a group as a row carrying `aria-expanded`, and a `[role=group]`
+ * container of children only while it is open. That makes the state readable,
+ * which matters because selecting a group is a TOGGLE and not an action:
+ *
+ *     aria-expanded=false   click   ->  aria-expanded=true, children present
+ *     aria-expanded=true    click   ->  aria-expanded=false, children gone
+ *
+ * So a second click to "retry" a group that had already expanded closes it again.
+ * A real run lost eight pages to exactly that (F-62): the group was expanded,
+ * the first read raced, the retry collapsed it, and the exporter reported success
+ * with a whole subtree missing. Nothing should click a group without asking.
+ *
+ * @param {object} frame - The Playwright frame
+ * @param {string} groupId - Id of the group row
+ * @returns {Promise<boolean|null>} true/false, or null when the row is gone
+ */
+async function isGroupExpanded(frame, groupId) {
+    return frame.evaluate((id) => {
+        const row = document.getElementById(id);
+        if (!row) return null;
+        return row.getAttribute('aria-expanded') === 'true';
+    }, groupId);
 }
 
 /**
@@ -672,5 +891,7 @@ module.exports = {
     getPageContent,
     selectPage,
     navigateBack,
-    isSectionLocked
+    isSectionLocked,
+    isGroupExpanded,
+    readCanvasState
 };

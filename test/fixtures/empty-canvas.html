@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<!--
+  Fixture: the empty-canvas state (F-61).
+
+  A page that OneNote has torn down but not finished rebuilding. Its content
+  outlines are gone, and the ARIA landmark that getPageContent falls back to when
+  it finds none is left holding nothing but its own accessible name.
+
+  That combination is what produced a 15-byte note whose entire body was the
+  string "Page Contents", on a page that really did have a full-page printout
+  image and two attachments in it:
+
+      $ od -c Section1-Note1.1_PDFs.md
+      0000000  \n  \n   P   a   g   e       C   o   n   t   e   n   t   s
+
+  Nothing about that file says it is wrong. It has a plausible name, a plausible
+  size, and no error anywhere: the run logged `Saved (0 assets)` and finished
+  declaring success.
+
+  The real OneNote frame has no #OreoCanvas and no .canvasContainer - the scraper
+  only finds outlines because it falls back to document.body. Here the outlines
+  are removed from body directly, which is the same thing.
+
+  The section list and the page list are present and normal, because that is the
+  situation in a real notebook: the export walked the section fine, reached this
+  page, clicked it, and the canvas had nothing in it. A fixture that lacked a
+  section list would be a different (and much less interesting) failure - the walk
+  would simply find no sections and stop.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>empty canvas fixture</title>
+<style>
+  /* Real dimensions: getSections drops zero-size elements, and Playwright's
+     click refuses an element that is not visible. */
+  .sectionListItem, .pageListItem { display: block; width: 320px; height: 26px; }
+  .navItem { display: block; width: 300px; height: 22px; }
+  .sectionList, .pageList { display: block; width: 340px; }
+</style>
+</head>
+<body>
+
+  <!-- ===== the section list, so the walk finds a section to enter ===== -->
+  <div class="sectionList">
+    <div id="11111111-1111-4111-8111-111111111111"
+         class="sectionListItem mainItem__item___AAAA" draggable="true">
+      <div class="navItem navItem__item____EEEE sectionItem" role="treeitem"
+           aria-label="Section One, Section. Selected. Press Tab to navigate to page list of the section."
+           aria-selected="true" data-tip="Section One" tabindex="0" data-selection-index="0">
+        <div class="mainItem__itemWrap___GGGG">
+          <div class="colorBlock__colorBlock___HHHH"><img alt="tabIcon" class="colorBlock__tab___IIII" src="data:image/gif;base64,R0lGOD"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== the page list, so getPages() has something to select ===== -->
+  <div id="PageList" class="pageList">
+    <div class="pageNode" id="{aaaaaaaa-1111-4111-8111-111111111111}{1}">
+      <div class="pageListItem mainItem__item___AAAA" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" role="button"
+             aria-label="The Page, page 1 of 1, Page. Selected. Press Ctrl + F6 to navigate to page contents."
+             aria-selected="true" data-tip="The Page" tabindex="0" data-selection-index="0">
+          <div class="mainItem__itemWrap___GGGG"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    The landmark. Empty, so its only text is its accessible name - which is
+    exactly the string that ended up in the exported note.
+  -->
+  <div role="main">
+    <h2>Page Contents</h2>
+  </div>
+
+</body>
+</html>

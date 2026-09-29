@@ -632,6 +632,58 @@ that came out of it kept.
 awaited calls through the retrying path. `test/notebookFrame.test.js` uses the
 exact call shape from `downloadStrategies.js`, so it cannot come back quietly.
 
+### The same mistake, third time, on a fix I had already called verified (F-61)
+
+The user reported a page exported as the two words "Page Contents". The file was
+fifteen bytes: `\n\nPage Contents`, with no date line, which is the proof that
+the scraper had found no content outlines and fallen back to the `div[role=main]`
+landmark. The cause was a fixed `waitForTimeout(3000)` between clicking a page
+and scraping it, so the fix was to wait for the content instead of the clock.
+
+**The first version of that fix was worse than the bug it replaced, and I shipped
+it into a verification run before noticing.** It waited for `.OutlineContainer`
+to exist. OneNote does not clear the canvas when you click a page, so the outgoing
+page's outlines are still there and that condition is true *immediately*. The run
+exported 19 pages in eight seconds, and the content was catastrophic:
+
+```
+   5 w | Section S1-Note1.md                 (was 5)
+   5 w | Section S1-Note1w Table.md           (was 206)
+  25 w | Note w linktopage.md                 ┐
+  25 w | Note with SectionLink.md             ├ the same 25 words, three times
+  23 w | SectionS2-Note1wPic.md               ┘
+```
+
+A probe over the real notebook settled it — 16 of 19 pages were showing the
+*previous* page's title. Replacing a race with a condition that is trivially true
+is not a fix, and the reason the stub existed in the first place is that nobody
+checked what the condition meant.
+
+**The second version was wrong too, in the opposite direction.** It waited for
+the canvas title to equal the requested page. That is necessary and not
+sufficient: OneNote *clones* whichever page is on screen while it transitions, so
+
+```
+[previous] -> [previous + previous] -> [] -> [wanted + wanted] -> [wanted]
+```
+
+The title is already correct at `[wanted + wanted]`, and `getPageContent` scrapes
+every outline it finds, so the export produced pages with their content **twice**
+— the 206-word table page came out as 406. A third measurement found images load
+one step *after* the outlines settle (`outlines=3 img=16/15` → `outlines=3
+img=16/16`), so two of nineteen pages were losing their picture with no error.
+
+The shipped fix therefore requires three things at once: the requested title,
+exactly one copy of it, and two consecutive identical readings. The lesson is the
+one from F-59 with a sharper edge — **the wait is the part of this codebase most
+able to produce a silent wrong answer, because a wait that returns early is
+indistinguishable from a wait that worked.** The reference run for this notebook
+existed and was byte-comparable; comparing against it is what caught all three.
+
+What actually made this diagnosable was measuring the transition rather than
+reasoning about it. Each of the three wrong versions was plausible, and each was
+wrong in a way that reasoning about the code could not have revealed.
+
 
 - Map the duplicated `--notebook-link` vs `--notebook` flow in `runExport`
   (`exporter.js:364-423` vs `426-537`).
@@ -748,7 +800,11 @@ which also records the diagnosis I got wrong first.
 | F-21 | Low | `exporter.js:122` | ~~`navigateBack` failure ignored ⇒ traversal continues against the wrong tree~~ — **disproved by a real run**; the throw I added broke the export. Reverted `4e8d065`. | reverted |
 | F-22 | Medium | `scrapers.js:52` | Missing group container returns `[]`; a whole subtree vanishes at default log level | **fixed** `d878ceb` |
 | F-32 | Medium | `downloadStrategies.js:333` | Up to 9 strategy chains per attachment ⇒ ~7 min for one dead link | **fixed** — `withRetry` gained `maxElapsedMs`; an attachment is capped at 30s of wall clock, which the strategy that actually works (4s) fits inside |
-| F-60 | Medium | `scrapers.js:425` | One file attachment is scraped 2–3 times: a `div.WACEFContainer[role=link]` and the `span.WACEFOverlay` inside it both match, so the same PDF is downloaded repeatedly and lands as `file.pdf`, `file_1.pdf`, … **Confirmed live** (`Section1-Note1.1_PDFs` produced 3 entries for 1 file) | open — the two candidates need collapsing to one, and which one is clickable is not obvious from the DOM |
+| F-60 | Medium | `scrapers.js:425` | One file attachment is scraped 2–3 times: a `div.WACEFContainer[role=link]` and the `span.WACEFOverlay` inside it both match, so the same PDF is downloaded repeatedly and lands as `file.pdf`, `file_1.pdf`, … **Confirmed live** (`Section1-Note1.1_PDFs` produced 3 entries for 1 file) | **fixed** — a candidate whose ancestor names the same file is a part of that file, not a file of its own. 3 → 2 on the live page, and the entry that had no click marker at all now has one |
+| F-61 | **High** | `exporter.js:527`, `scrapers.js:267` | A page that had not finished rendering was written as a 15-byte note containing the string `Page Contents`, and the run reported success | **fixed** — wait for the requested page to be *settled* on the canvas: the right title, exactly one copy of it, and two consecutive identical readings (images load after the outlines do). Re-select once, then fail the page by name with nothing written, naming what the canvas really showed |
+| F-62 | **High** | `exporter.js:294` | A section group that had not finished expanding returned an empty list, which was treated as "this group is empty": the whole subtree was skipped **with a warning that did not affect the exit status** | **fixed** — wait for the group's children, and click only while `aria-expanded` says collapsed, since selecting a group is a toggle. Fail the group by name if the children never appear. Found by a verification run of F-61 that lost 8 pages and still printed `Export complete!` with exit 0; the group's failure turned out to be a symptom of F-61's desynchronised canvas |
+| **F-63** | **High** | `scrapers.js:492` | **Fixed.** Regression from F-60: attachments were downloaded but no longer linked from the note. The `[[assets/…]]` embed is emitted by a turndown rule keyed on `data-local-file` (`parser.js:26`), and turndown never consults custom rules for a *blank* node — and F-60's dedup kept OneNote's empty click overlay, so the id went there and no embed was produced. `Complete_Paris_9th_Arrondissement_Guide.docx` and `attached_file.bin` sat on disk referenced by **zero** notes | **fixed** — `data-local-file` (renders the link) and `data-one-attach-id` (marks the element to click) are different jobs and were conflated; the id now goes on the element that shows the file's name. Live: 12 assets, 0 orphaned, duplicate `_1` downloads gone, dangling links 8 → 1 |
+| **F-64** | Medium | `exporter.js:714` | **Open — pre-existing, not a regression.** An asset whose download fails still gets an embed, because the attribute is rewritten to the final file name *before* `downloadAttachment` is attempted. The note links to a file that was never written | **not fixed** — needs a product decision: on a failed download, should the note show the filename as plain text, or a visible "download failed" marker? Both are defensible and neither is obviously right, which is why it is being asked about rather than decided |
 
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |

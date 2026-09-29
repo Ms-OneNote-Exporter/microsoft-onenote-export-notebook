@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<!--
+  Fixture: OneNote's file-attachment markup, as captured in dumps/20260927/ and
+  de-identified like the other fixtures.
+
+  This is the F-60 shape. One file attachment in OneNote is not a link at all -
+  it is a container element holding several parts, and more than one of those
+  parts matches the attachment pattern the scraper looks for:
+
+      div.WACEFContainer[role=link][aria-label="<name>"]   <- names the file
+        span.WACEFOverlay[title="<name>"]                  <- the click target
+        img.WACEFImage[title="<name>"][src=<object URL>]     <- the icon
+        div.WACEFFilename[title="<name>"]                 <- the visible label
+
+  A page containing this produced three download attempts for one PDF: the
+  overlay, the filename label, and (separately, and legitimately) a SharePoint
+  hyperlink to the same document. The third is a real second reference and is
+  kept; the first two are two halves of one attachment and are not.
+
+  Everything is inert and offline: the image is a data: URL rather than the
+  object URL the real UI uses for it, because that scheme is a real one and a
+  committed fixture must not contain it. The scraper's identity test keys on
+  title/aria-label, not on the image source, so the substitution does not weaken
+  what is being tested.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>attachment container fixture</title>
+<style>
+  /* Real dimensions: getPageContent's image test uses offsetWidth/offsetHeight,
+     and Playwright's click refuses an element that is not visible. */
+  .WACEFContainer { display: block; width: 320px; }
+  .WACEFOverlay { display: block; width: 320px; height: 24px; }
+  .WACEFImage { width: 16px; height: 16px; }
+  .WACEFFilename { display: block; width: 300px; height: 20px; }
+  #OreoCanvas { display: block; width: 800px; }
+</style>
+</head>
+<body>
+
+  <div id="OreoCanvas" class="canvasContainer">
+
+    <div class="OutlineContainer">
+      <div class="TitleOutline">Attachment Shapes</div>
+    </div>
+
+    <div class="OutlineContainer">
+      <!--
+        THE F-60 CASE: one file, two matching candidates. Both the overlay and
+        the filename label carry the same title, and both name the same file as
+        the container above them.
+      -->
+      <div class="WACEFContainer" role="link" aria-label="Quarterly Report.pdf" tabindex="0">
+        <span class="WACEFOverlay" title="Quarterly Report.pdf"></span>
+        <img class="WACEFImage" role="presentation" alt="Quarterly Report.pdf" title="Quarterly Report.pdf"
+             src="data:image/gif;base64,R0lGOD">
+        <div class="WACEFFilename" role="presentation" title="Quarterly Report.pdf">Quarterly Report</div>
+      </div>
+    </div>
+
+    <div class="OutlineContainer">
+      <!--
+        THE CASE THAT MUST NOT BE COLLAPSED: a second, different file. Same
+        markup shape, but a different container, so the two must stay separate
+        even though the scraper sees the same class names.
+      -->
+      <div class="WACEFContainer" role="link" aria-label="Meeting Notes.docx" tabindex="0">
+        <span class="WACEFOverlay" title="Meeting Notes.docx"></span>
+        <img class="WACEFImage" role="presentation" alt="Meeting Notes.docx" title="Meeting Notes.docx"
+             src="data:image/gif;base64,R0lGOD">
+        <div class="WACEFFilename" role="presentation" title="Meeting Notes.docx">Meeting Notes</div>
+      </div>
+    </div>
+
+    <div class="OutlineContainer">
+      <!--
+        A genuine second reference to a file already attached above: a real
+        SharePoint hyperlink. It has an href of its own and no ancestor naming
+        it, so it is a separate link in the note and must survive as one.
+      -->
+      <a class="HyperlinkV2" href="https://COMPANYNAME-my.sharepoint.com/:b:/g/personal/COMPANYUSER/ABC123"
+         target="_blank" rel="noreferrer noopener">Quarterly Report.pdf</a>
+    </div>
+
+    <div class="OutlineContainer">
+      <!--
+        An ordinary title/aria-label element with no attachment container around
+        it at all. Deduping must not touch this: it is its own file, and the
+        longest-standing shape in the fixture set.
+      -->
+      <div title="Standalone Handout.pdf" role="presentation">Standalone Handout</div>
+    </div>
+
+  </div>
+</body>
+</html>
