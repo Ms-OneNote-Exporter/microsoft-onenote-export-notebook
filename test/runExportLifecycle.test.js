@@ -70,7 +70,10 @@ const buildStage = () => {
             return sel === '.sectionList' ? {} : null;
         },
         $$eval: async () => [],
-        evaluate: async () => { events.push('frame.evaluate'); return []; },
+        // getSections is the only evaluate this test reaches, and it now answers
+        // with {items, reason} rather than a bare array. An empty notebook at the
+        // top level is the valid case: no parent, so no reason.
+        evaluate: async () => { events.push('frame.evaluate'); return { items: [], reason: null }; },
         waitForSelector: async () => { events.push('frame.waitForSelector'); return {}; },
         waitForTimeout: async () => { events.push('frame.waitForTimeout'); },
         content: async () => '<html></html>',

@@ -334,7 +334,8 @@ describe('the same wait for a group that has not expanded', () => {
         // a group that is ready must not pay the wait.
         await page.goto(fixture('section-list-nested.html'), { waitUntil: 'domcontentloaded' });
         const { getSections } = require('../src/scrapers');
-        const group = (await getSections(page, null)).find((i) => i.type === 'group');
+        const { items } = await getSections(page, null);
+        const group = items.find((i) => i.type === 'group');
         expect(group).toBeDefined();
 
         const started = Date.now();
@@ -351,6 +352,18 @@ describe('the same wait for a group that has not expanded', () => {
         await page.goto(fixture('empty-canvas.html'), { waitUntil: 'domcontentloaded' });
 
         expect(await waitForGroupItems(page.mainFrame(), 'no-such-group', 200)).toBe(0);
+    });
+
+    // F-22's residual: the zero has to be explainable, because a group that yields
+    // nothing is a whole subtree that did not get exported.
+    itBrowser('names the reason in the log when a group yields nothing', async () => {
+        await page.goto(fixture('empty-canvas.html'), { waitUntil: 'domcontentloaded' });
+
+        logger.debug.mockClear();
+        expect(await waitForGroupItems(page.mainFrame(), 'no-such-group', 200)).toBe(0);
+
+        // 'no-parent', not silence: the id is simply not in the DOM.
+        expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('no-parent'));
     });
 });
 
