@@ -283,9 +283,9 @@ with several files takes a while. Two things are worth knowing:
   actually works — clicking the file in OneNote and confirming the download —
   takes about four seconds, so the cap never truncates a working download; it
   stops the failing ones from spending minutes apiece.
-- A file attachment is currently fetched more than once for a single file, and
-  the repeats are written as `file.pdf`, `file_1.pdf`, … See `REVIEW-CODE.md`
-  (F-60).
+- If a note refers to the same file twice — once as an attachment, once as a
+  cloud link — you get two copies, `file.pdf` and `file_1.pdf`. That is
+  deliberate: the note says it twice, so the Markdown says it twice.
 
 A file that cannot be fetched is named in the log and is still linked by its
 planned name in the Markdown, so the note is never silently lost — it costs a

@@ -355,6 +355,55 @@ async function getPageContent(frame) {
         const realPotentialLinks = Array.from(canvas.querySelectorAll('a, div[title], span[title], button[title]'));
 
         const processedFileSignatures = new Set();
+        const claimedFileOwners = new Set();
+
+        /**
+         * The element that *is* the file, as opposed to a piece of it.
+         *
+         * OneNote does not render a file attachment as a link. It renders a
+         * container element holding several parts - an overlay, an icon, and a
+         * visible filename label - and more than one of those parts matches the
+         * attachment pattern above:
+         *
+         *     div.WACEFContainer[role=link][aria-label="report.pdf"]
+         *       span.WACEFOverlay[title="report.pdf"]     <- the click target
+         *       img.WACEFImage[title="report.pdf"]
+         *       div.WACEFFilename[title="report.pdf"]    <- the label
+         *
+         * So one PDF was scraped as two attachments, which meant two download
+         * attempts for the same bytes and two near-identical files on disk
+         * (report.pdf and report_1.pdf). Worse, the duplicate is the one that
+         * looks healthy: the click-target marker is placed by a fuzzy title
+         * match that lands on the *other* candidate, so the first one was
+         * reported as "Could not find clickable element" and could never be
+         * fetched at all. A real run spent 30s a page proving it (F-60).
+         *
+         * So a candidate whose ancestor names the same file is a part of that
+         * ancestor's attachment, not a file of its own, and is skipped. The test
+         * is deliberately narrow: the ancestor must name THIS candidate's file.
+         * Two different files that share markup shape have separate containers
+         * and both survive, and a hyperlink the author added on purpose - a
+         * SharePoint link to a file also attached above - names no ancestor at
+         * all, so it remains its own attachment.
+         *
+         * @param {Element} el - A candidate that matched the attachment pattern
+         * @returns {Element} The element that owns the file
+         */
+        const fileOwner = (el) => {
+            const labelOf = (node) => (
+                (node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title'))) || ''
+            ).trim().toLowerCase();
+            const own = labelOf(el);
+            // Nothing names this element, so nothing can own it either.
+            if (!own) return el;
+
+            let owner = null;
+            for (let p = el.parentElement; p; p = p.parentElement) {
+                const label = labelOf(p);
+                if (label && (label === own || label.startsWith(own))) owner = p;
+            }
+            return owner || el;
+        };
 
         allPotentialLinks.forEach((link) => {
             const href = link.getAttribute('href') || '';
@@ -364,6 +413,13 @@ async function getPageContent(frame) {
             const { isFile, isCloud } = isFileLink(link);
 
             if (isFile) {
+                // F-60: several candidates can be one file. Keep the first, which
+                // in OneNote's markup is the overlay - the part OneNote actually
+                // makes clickable - and drop the rest.
+                const owner = fileOwner(link);
+                if (claimedFileOwners.has(owner)) return;
+                claimedFileOwners.add(owner);
+
                 // Deduplicate by href (if present) or by title+text
                 const signature = href || (`${title}_${text}`);
                 if (processedFileSignatures.has(signature)) return;

@@ -207,6 +207,79 @@ describe('scrapers against captured fixtures', () => {
         });
     });
 
+    /**
+     * F-60: OneNote renders a file attachment as a container holding an overlay,
+     * an icon and a filename label, and more than one of those parts matches the
+     * attachment pattern. Against the captured markup that produced six
+     * attachments for four real references, and the duplicate was the
+     * healthy-looking one: the click marker was placed by a fuzzy title match
+     * onto the *other* candidate, so the first was logged as "Could not find
+     * clickable element" and could never be fetched at all.
+     */
+    describe('one file attachment, however many parts it is drawn with', () => {
+        /** The element each attachment id was actually placed on. */
+        const markedElements = () => page.evaluate(() => {
+            const out = {};
+            document.querySelectorAll('[data-one-attach-id]').forEach((el) => {
+                out[el.getAttribute('data-one-attach-id')] = (el.className || '').toString();
+            });
+            return out;
+        });
+
+        let content;
+        let marked;
+        let byName;
+
+        beforeAll(async () => {
+            await loadFixture('attachment-container.html');
+            content = await getPageContent(page);
+            marked = await markedElements();
+            byName = {};
+            for (const a of content.attachments) byName[a.originalName] = a;
+        });
+
+        itBrowser('scrapes each file once, not once per part of it', async () => {
+            // Four real references in the fixture: two attached files, a
+            // deliberate hyperlink to one of them, and a standalone titled
+            // element. Six is what the duplicate parts used to produce.
+            expect(content.attachments).toHaveLength(4);
+        });
+
+        itBrowser('gives the click marker to the overlay, which is what OneNote makes clickable', async () => {
+            expect(marked.file_0).toBe('WACEFOverlay');
+            expect(marked.file_1).toBe('WACEFOverlay');
+        });
+
+        itBrowser('leaves no attachment without a click marker, so none is unfetchable forever', async () => {
+            // The F-60 symptom in one assertion: an attachment with no marker can
+            // never be downloaded, and was previously reported as a failure on
+            // every page it appeared on.
+            expect(Object.keys(marked).sort())
+                .toEqual(content.attachments.map((a) => a.id).sort());
+        });
+
+        itBrowser('keeps two different files apart even though their markup is identical', async () => {
+            expect(Object.keys(byName).sort())
+                .toEqual(['Meeting Notes.docx', 'Quarterly Report.pdf', 'Standalone Handout.pdf']);
+        });
+
+        itBrowser('keeps a hyperlink the author added on purpose, even to a file already attached', async () => {
+            // Two references to one document is not a bug: the note says it twice,
+            // so the export says it twice. Collapsing this would lose a reference.
+            const cloud = content.attachments.filter((a) => a.src);
+            expect(cloud).toHaveLength(1);
+            expect(cloud[0].originalName).toBe('Quarterly Report.pdf');
+            expect(cloud[0].isCloud).toBe(true);
+        });
+
+        itBrowser('still scrapes a titled element that has no attachment container around it', async () => {
+            // The longest-standing shape in the fixture set must be untouched by
+            // any dedup: nothing names an ancestor, so it owns itself.
+            expect(byName['Standalone Handout.pdf']).toBeDefined();
+            expect(byName['Standalone Handout.pdf'].id).toBe('file_3');
+        });
+    });
+
     describe('fixtures are safe to commit', () => {
         // The de-identification is the whole point of committing these. If a future
         // capture is pasted in without being scrubbed, this should catch it.

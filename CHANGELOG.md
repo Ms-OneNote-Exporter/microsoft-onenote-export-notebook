@@ -4,6 +4,41 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A file attachment is no longer downloaded once per part of itself** (F-60).
+  OneNote does not draw a file attachment as a link. It draws a container holding
+  an overlay, an icon and a filename label:
+
+  ```
+  div.WACEFContainer[role=link][aria-label="report.pdf"]
+    span.WACEFOverlay[title="report.pdf"]     <- the click target
+    img.WACEFImage[title="report.pdf"]
+    div.WACEFFilename[title="report.pdf"]    <- the label
+  ```
+
+  More than one of those parts matched the attachment pattern, so a single PDF
+  became two or three download attempts and landed on disk as `file.pdf` and
+  `file_1.pdf`. The duplicate was also the harmful one: the click marker is
+  placed by matching on title, so it landed on the *other* candidate and the
+  first was logged as `Could not find clickable element` on every page it
+  appeared on, and could never be fetched at all.
+
+  A candidate whose ancestor names the same file is now treated as a part of that
+  file rather than a file of its own. The test is deliberately narrow — the
+  ancestor must name *this* candidate's file — so two different files with
+  identical markup still both export, a titled element with no container around
+  it is untouched, and a hyperlink the author added on purpose survives as its
+  own attachment. On the live page this went from 3 attempts to 2, the two being
+  the two references the note actually makes, and the entry that had no marker at
+  all now has one.
+
+  Two references to one document are still exported twice, on purpose: the note
+  says it twice, so the Markdown says it twice. Collapsing that would lose a
+  reference the author made.
+
 ## [0.2.1] - 2026-09-28
 
 An export had not completed since 12:17 on 2026-09-28. Every run since reached
