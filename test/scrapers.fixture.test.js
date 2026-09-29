@@ -280,6 +280,75 @@ describe('scrapers against captured fixtures', () => {
         });
     });
 
+    describe('a downloaded file is still linked from the note', () => {
+        /**
+         * F-63, and the failure mode that is invisible in every number the summary
+         * reports.
+         *
+         * The F-60 dedup keeps one candidate per file, and the first candidate in
+         * OneNote's markup is the click overlay - an *empty* element. The id that
+         * becomes the Obsidian embed was stamped there, and turndown never consults
+         * a custom rule for a blank node:
+         *
+         *     Rules.prototype.forNode = function (node) {
+         *       if (node.isBlank) return this.blankRule
+         *
+         * So the embed was never produced. The attachment count stayed right, the
+         * asset still downloaded, the run still exited 0 - and the note showed the
+         * filename as plain text with nothing linking to the file sitting next to
+         * it in assets/. Two files on disk, referenced by zero notes.
+         *
+         * These assertions are on the *markdown*, not on the HTML, because that is
+         * where the defect was invisible. An HTML assertion - "the id is present",
+         * which is what the F-60 tests checked - passes with the embed missing.
+         */
+        const { createMarkdownConverter } = require('../src/parser');
+
+        let markdown;
+        let content;
+
+        beforeAll(async () => {
+            await loadFixture('attachment-container.html');
+            content = await getPageContent(page);
+            markdown = createMarkdownConverter().turndown(content.contentHtml);
+        });
+
+        itBrowser('renders exactly one embed per attachment it scraped', async () => {
+            // The lookbehind matters: an image embed is `![[assets/…]]`, and a
+            // pattern without it counts those too. The fixture has two images, so
+            // the sloppy version of this assertion passed against the bug by
+            // arithmetic coincidence - 2 images + 2 working file embeds == the 4
+            // attachments, none of which was the pair that had stopped rendering.
+            const fileEmbeds = markdown.match(/(?<!!)\[\[assets\/[^\]]+\]\]/g) || [];
+            expect(fileEmbeds).toHaveLength(content.attachments.length);
+
+            // ...and each id appears exactly once, so the parts of one file have
+            // not started producing an embed each.
+            for (const a of content.attachments) {
+                const occurrences = markdown.split(`[[assets/${a.id}`).length - 1;
+                expect(occurrences).toBe(1);
+            }
+        });
+
+        itBrowser('gives the two container attachments their embed back', async () => {
+            // These are the ones the F-60 dedup collapsed, and the ones that
+            // silently lost their link.
+            expect(markdown).toContain('[[assets/file_0.pdf]]');
+            expect(markdown).toContain('[[assets/file_1.docx]]');
+        });
+
+        itBrowser('does not emit a second embed for the parts of the same file', async () => {
+            // The point of F-60 has to survive the fix: one file, one embed, even
+            // though the container is drawn as four elements.
+            const embeds = markdown.match(/\[\[assets\/file_0\.pdf\]\]/g) || [];
+            expect(embeds).toHaveLength(1);
+        });
+
+        itBrowser('keeps the deliberate hyperlink as its own embed', async () => {
+            expect(markdown).toContain('[[assets/file_2.pdf]]');
+        });
+    });
+
     describe('fixtures are safe to commit', () => {
         // The de-identification is the whole point of committing these. If a future
         // capture is pasted in without being scrubbed, this should catch it.

@@ -127,6 +127,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the two references the note actually makes, and the entry that had no marker at
   all now has one.
 
+  Deduplicating to one attachment per file had a consequence that no count showed:
+  **the file downloaded and the note stopped linking to it.** OneNote's click
+  overlay is an *empty* element and the first candidate in document order, so the
+  dedup kept it — and the id that becomes the Obsidian embed was stamped there.
+  Turndown answers a blank node from its built-in blank rule and never consults
+  custom rules at all:
+
+  ```js
+  Rules.prototype.forNode = function (node) {
+    if (node.isBlank) return this.blankRule
+  }
+  ```
+
+  So no embed was produced, silently. In a real export,
+  `Complete_Paris_9th_Arrondissement_Guide.docx` and `attached_file.bin` sat in
+  `assets/` referenced by **zero** notes, and the notes showed the filename as
+  plain text.
+
+  Before the dedup this worked by accident: the overlay was scraped first and the
+  visible label second, so it was the *second* candidate's id that produced the
+  embed. The two attributes do different jobs — `data-local-file` renders the link
+  in the note, `data-one-attach-id` marks the element to click to download it —
+  and the dedup conflated them. The id now goes on the element that shows the
+  file's name; the click marker still goes on the overlay.
+
+  Verified on the real notebook: 12 assets on disk, **none orphaned**, and the
+  duplicate `_1` downloads are gone. Links in the output pointing at files that
+  were never written fell from **8 to 1**, and the one that remains is a separate
+  pre-existing fault, described below.
+
   Two references to one document are still exported twice, on purpose: the note
   says it twice, so the Markdown says it twice. Collapsing that would lose a
   reference the author made.

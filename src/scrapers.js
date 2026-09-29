@@ -415,6 +415,46 @@ async function getPageContent(frame) {
             return owner || el;
         };
 
+        /**
+         * The element inside a file's container that actually shows the file's name.
+         *
+         * This exists because of a turndown rule that looks like it works and does
+         * not. `data-local-file` becomes the Obsidian embed via a custom rule (see
+         * parser.js), but turndown answers a *blank* node from its built-in blank
+         * rule and never consults custom rules at all:
+         *
+         *     Rules.prototype.forNode = function (node) {
+         *       if (node.isBlank) return this.blankRule
+         *       ...
+         *
+         * OneNote's overlay is an empty element, so an id stamped on it produces no
+         * embed, silently. Turning the attachment fixture through the real converter
+         * shows it exactly:
+         *
+         *     Quarterly Report            <- id was on the empty overlay: no embed
+         *     Meeting Notes               <- same
+         *     [[assets/file_2.pdf]]       <- has text: embed
+         *     [[assets/file_3.pdf]]       <- has text: embed
+         *
+         * So the element that carries the name has to carry the id. Before the
+         * F-60 dedup this happened by luck: the overlay was scraped first and the
+         * visible label second, and the *second* candidate's id was the one that
+         * produced the embed. Deduplicating to a single attachment kept the first,
+         * and the link went with it - the file downloaded and the note stopped
+         * referring to it (F-63).
+         *
+         * @param {Element} owner - The container that owns the file
+         * @returns {Element|null} The element showing the name, or null if none does
+         */
+        const fileLabel = (owner) => {
+            if (!owner) return null;
+            if ((owner.innerText || '').trim()) return owner;
+            for (const c of owner.querySelectorAll('a, div[title], span[title], button[title]')) {
+                if ((c.innerText || '').trim()) return c;
+            }
+            return null;
+        };
+
         allPotentialLinks.forEach((link) => {
             const href = link.getAttribute('href') || '';
             const text = link.innerText.trim();
@@ -489,8 +529,18 @@ async function getPageContent(frame) {
                 // eslint-disable-next-line no-console
                 console.debug(`[Scraper] Detected attachment: ${originalName} (ID: ${attachId}, Type: ${link.tagName})`);
                 attachmentInfos.push({ id: attachId, src: href, originalName: originalName, isCloud: isCloud });
-                link.setAttribute('data-local-file', attachId);
-                link.setAttribute('data-filename', originalName);
+
+                // The id goes on the element that SHOWS the name, not on whichever
+                // part of the container happened to be scraped first (F-63). The
+                // two are different jobs and F-60 conflated them: the overlay is
+                // what OneNote makes clickable, and the label is what the reader
+                // sees - and turndown renders an embed only for the second, because
+                // an empty element never reaches a custom rule. Getting this wrong
+                // is invisible in every count the summary reports: the file still
+                // downloads, and only the note stops linking to it.
+                const label = fileLabel(owner) || link;
+                label.setAttribute('data-local-file', attachId);
+                label.setAttribute('data-filename', originalName);
 
                 // Tag the REAL element for clicking
                 // Match by exact href first, then fuzzy href, then title, then fuzzy text
