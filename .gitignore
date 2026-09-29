@@ -2,6 +2,12 @@ node_modules/
 output/
 logs/
 auth.json
+# A repo-local .npmrc is a normal thing to create (npm config set, or working
+# around NODE_AUTH_TOKEN) and routinely holds a registry auth token. This repo
+# already ignores auth.json for exactly that reason; without this line the token
+# would show up in `git status` looking like a file to commit. Nothing reads a
+# repo-local .npmrc, so ignoring it costs nothing.
+.npmrc
 *.log
 .DS_Store
 diag-dumps/
