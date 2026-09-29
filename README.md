@@ -287,9 +287,21 @@ with several files takes a while. Two things are worth knowing:
   cloud link — you get two copies, `file.pdf` and `file_1.pdf`. That is
   deliberate: the note says it twice, so the Markdown says it twice.
 
-A file that cannot be fetched is named in the log and is still linked by its
-planned name in the Markdown, so the note is never silently lost — it costs a
-re-run rather than correctness.
+A file that cannot be fetched is named in the log **and in the note**. The link
+is kept — it costs a re-run rather than correctness, and the link is what the
+re-run fills in — but the page ends with a short notice listing what is missing:
+
+> ⚠️ **2 assets could not be downloaded.**
+>
+> The links below point at files that are not on disk. They are left in
+> place on purpose, so a re-run can fill them in.
+> - `assets/report.pdf`
+> - `assets/Page_img_3.png`
+
+The notice is rebuilt on every run, so it disappears on its own once a re-run
+succeeds. Without it the page is indistinguishable from a complete one: the link
+renders as an empty embed, and the only other trace is an `ERROR` line in
+`logs/app.log`, which is not somewhere anyone looks.
 
 ## Exit codes
 

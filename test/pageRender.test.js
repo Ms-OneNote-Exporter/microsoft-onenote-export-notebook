@@ -576,4 +576,151 @@ describe('a page that renders is unaffected', () => {
             fs.removeSync(outDir);
         }
     }, 60000);
+
+    itBrowser('adds no notice when there was nothing to fail', async () => {
+        // The notice must not appear on a page whose assets are all present: a
+        // warning that shows up unconditionally is a warning nobody reads.
+        expect(exporter.renderFailedAssetNotice([])).toBe('');
+    });
+});
+
+describe('the notice a page gets for assets that did not download', () => {
+    const notice = exporter.renderFailedAssetNotice;
+
+    it('says nothing when nothing failed', () => {
+        expect(notice([])).toBe('');
+    });
+
+    it('uses the singular for one file', () => {
+        expect(notice(['assets/report.pdf'])).toContain('**1 asset could not be downloaded.**');
+    });
+
+    it('counts the files, not the references', () => {
+        // The same file attached and hyperlinked on one page is one missing file.
+        // Listing it twice would read as two problems and waste a re-run.
+        const text = notice(['assets/report.pdf', 'assets/report.pdf']);
+        expect(text).toContain('**1 asset could not be downloaded.**');
+        expect(text.split('`assets/report.pdf`').length - 1).toBe(1);
+    });
+
+    it('lists each distinct missing file once', () => {
+        const text = notice(['assets/b.pdf', 'assets/a.pdf', 'assets/b.pdf']);
+        expect(text).toContain('**2 assets could not be downloaded.**');
+        expect(text.split('`assets/a.pdf`').length - 1).toBe(1);
+        expect(text.split('`assets/b.pdf`').length - 1).toBe(1);
+    });
+
+    it('orders the list, so two runs of the same notebook read the same', () => {
+        const text = notice(['assets/zebra.pdf', 'assets/apple.pdf']);
+        expect(text.indexOf('apple.pdf')).toBeLessThan(text.indexOf('zebra.pdf'));
+    });
+
+    it('explains the surviving link, so the warning does not look like a bug', () => {
+        // A reader who sees a link and a warning saying the link is missing, with
+        // no explanation, will reasonably assume the exporter is broken.
+        expect(notice(['assets/report.pdf'])).toMatch(/re-run can fill them in/i);
+    });
+
+    it('separates itself from the note with a blank line', () => {
+        // The formatting bug this had on its first version. A `>` that follows a
+        // paragraph without a blank line is a lazy continuation as often as it is
+        // a blockquote, so the notice gets absorbed into the text above it - and
+        // the note then looks exactly as it did before the fix, which is the one
+        // outcome this whole change exists to prevent.
+        expect(notice(['assets/report.pdf']).startsWith('\n\n> ⚠️')).toBe(true);
+    });
+});
+
+describe('an asset that could not be downloaded says so in the note', () => {
+    // F-64.
+    //
+    // The README is explicit that a failed download keeps its link on purpose:
+    // "it costs a re-run rather than correctness", because the link is what the
+    // re-run fills in. That is sound. What was missing is the other half - a
+    // link to a file that was never written renders as an empty embed, so the
+    // page looks complete and is not, and the only trace was an ERROR line in a
+    // log nobody reads.
+    //
+    // So the link stays AND the note says what is missing. These assertions are
+    // on the written file, because that is the surface the reader has.
+    let browser;
+    let online = true;
+    let note;
+    let outDir;
+
+    beforeAll(async () => {
+        try {
+            browser = await chromium.launch({ headless: true });
+        } catch (e) {
+            online = false;
+            console.warn(`Skipping F-64 tests: Chromium unavailable (${e.message.split('\n')[0]})`);
+        }
+    }, 60000);
+
+    afterAll(async () => {
+        if (browser) await browser.close();
+        if (outDir) fs.removeSync(outDir);
+    });
+
+    // Forwards the timeout: the two unreachable downloads each run the strategy
+    // chain with its own retries, so the default 5s is not enough.
+    const itBrowser = (name, fn, timeout) => (online ? it(name, fn, timeout) : it.skip(name, fn, timeout));
+
+    beforeAll(async () => {
+        if (!online) return;
+        const page = await browser.newPage();
+        outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'f64-'));
+
+        try {
+            await page.goto(fixture('unreachable-assets.html'), { waitUntil: 'domcontentloaded' });
+
+            await exporter.exportContent({
+                contentFrame: page.mainFrame(),
+                notebookName: 'Broken Asset Notebook',
+                options: { exportDir: outDir },
+                page
+            });
+
+            note = fs.readFileSync(
+                path.join(outDir, 'Broken Asset Notebook', 'Section One', 'Unreachable Assets.md'),
+                'utf8');
+        } finally {
+            await page.close().catch(() => { });
+        }
+    }, 120000);
+
+    itBrowser('still exports the page, and its text', async () => {
+        // A failed download is not a failed page. Everything that could be
+        // scraped still is, or the fix would trade a dead link for a lost note.
+        expect(note).toContain('Text before the pictures.');
+        expect(note).toContain('Text after the pictures.');
+    });
+
+    itBrowser('keeps the links, so a re-run has something to fill in', async () => {
+        // The documented trade-off, kept. This is the assertion that would fail
+        // if someone "fixed" the dead link by deleting it.
+        expect(note).toContain('assets/Unreachable Assets_img_1.png');
+        expect(note).toContain('assets/Unreachable Assets_img_2.png');
+    });
+
+    itBrowser('says in the note that those files are not there', async () => {
+        // The F-64 symptom stated directly: the page looked complete and was not.
+        expect(note).toMatch(/2 assets could not be downloaded/);
+    });
+
+    itBrowser('names every missing file, so the gap is actionable', async () => {
+        expect(note).toContain('`assets/Unreachable Assets_img_1.png`');
+        expect(note).toContain('`assets/Unreachable Assets_img_2.png`');
+    });
+
+    itBrowser('explains why the link is still there, rather than looking like a mistake', async () => {
+        // A warning with no explanation reads as a bug in the exporter, and the
+        // natural reaction is to go and delete it.
+        expect(note).toMatch(/re-run can fill them in/i);
+    });
+
+    itBrowser('does not count a failed download as a saved asset', async () => {
+        // The notice is not a substitute for the count being honest.
+        expect(note).not.toContain('assets/Unreachable Assets_img_1.png`\n\n> ⚠️ **3');
+    });
 });
