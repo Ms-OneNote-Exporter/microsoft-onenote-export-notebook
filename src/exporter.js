@@ -364,6 +364,52 @@ async function waitForGroupItems(contentFrame, groupId, timeoutMs = 15000) {
 }
 
 /**
+ * Renders the note's footer listing assets that could not be downloaded.
+ *
+ * A failed download leaves its link in place on purpose. The README states the
+ * reasoning - "it costs a re-run rather than correctness" - and it is sound: the
+ * link is what a re-run fills in, and dropping it would erase the only evidence
+ * that a file was ever attached to that page.
+ *
+ * What was missing is the other half of that trade. A kept link to a file that
+ * does not exist renders as an empty embed, so the note looks complete and is
+ * not, and nothing in the note says so. The only trace was an ERROR line in the
+ * log, which is exactly the kind of place a reader does not look.
+ *
+ * So the link stays and the note says what is missing. The notice is rebuilt
+ * from scratch on every run, so it disappears by itself once a re-run succeeds
+ * and there is no stale marker to clean up.
+ *
+ * @param {string[]} assets - `assets/…` paths of the links that have no file
+ * @returns {string} Markdown to append, or '' when nothing failed
+ */
+function renderFailedAssetNotice(assets) {
+    // The same file referenced twice on a page - attached and linked - is one
+    // missing file, and listing it twice would read as two problems.
+    const missing = [...new Set(assets)].sort();
+    if (missing.length === 0) return '';
+
+    const heading = missing.length === 1
+        ? '> ⚠️ **1 asset could not be downloaded.**'
+        : `> ⚠️ **${missing.length} assets could not be downloaded.**`;
+
+    return [
+        // A blank line, not merely a newline. Without the separation the `>`
+        // follows the note's last paragraph directly, and a blockquote that is
+        // not separated from preceding text is a lazy continuation as often as it
+        // is a quote - so the notice would be swallowed into the paragraph above
+        // it, which is the one thing it must not do.
+        '', '',
+        heading,
+        '>',
+        '> The links below point at files that are not on disk. They are left in',
+        '> place on purpose, so a re-run can fill them in.',
+        ...missing.map((a) => `> - \`${a}\``),
+        ''
+    ].join('\n');
+}
+
+/**
  * Statistics for one export run.
  *
  * The `failed*` counters exist because every per-item error is caught and the
@@ -684,6 +730,11 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 // Rename and Download Resources
                 let savedResources = 0;
 
+                // `assets/…` paths whose download failed. The link stays in the
+                // note either way; this is what the page's notice is built from,
+                // so a failed download cannot pass for a complete export (F-64).
+                const failedAssets = [];
+
                 if (totalAssets > 0) {
                     await fs.ensureDir(assetDir);
 
@@ -698,6 +749,8 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                         if (success) {
                             savedResources++;
                             logger.debug(`[Asset] Saved IMAGE to: ${path.relative(process.cwd(), imgPath)}`);
+                        } else {
+                            failedAssets.push(`assets/${finalBaseName}.png`);
                         }
                     }
 
@@ -720,6 +773,8 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                         if (success) {
                             savedResources++;
                             logger.debug(`[Asset] Saved ATTACHMENT to: ${path.relative(process.cwd(), filePath)}`);
+                        } else {
+                            failedAssets.push(`assets/${finalFileName}`);
                         }
                     }
 
@@ -756,11 +811,13 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                         if (success) {
                             savedResources++;
                             logger.debug(`[Asset] Saved VIDEO to: ${path.relative(process.cwd(), filePath)}`);
+                        } else {
+                            failedAssets.push(`assets/${finalFileName}`);
                         }
                     }
                 }
 
-                const markdown = td.turndown(updatedHtml);
+                const markdown = td.turndown(updatedHtml) + renderFailedAssetNotice(failedAssets);
                 const fileName = sanitizedNoteName + '.md';
                 const filePath = path.join(sectionDir, fileName);
 
@@ -777,6 +834,17 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 stats.totalPages++;
                 stats.totalAssets += savedResources;
                 logger.success(`Saved (${savedResources} assets)`);
+
+                if (failedAssets.length > 0) {
+                    // The note carries the notice; this line is for someone reading
+                    // the log rather than their vault, and names the page so the
+                    // re-run target is obvious.
+                    const missing = [...new Set(failedAssets)];
+                    logger.warn(
+                        `      "${pageInfo.name}": ${missing.length} asset(s) could not be ` +
+                        `downloaded and are listed in the note: ${missing.join(', ')}`
+                    );
+                }
 
             } catch (e) {
                 // Ditto: without this, a tab that dies on page 12 of 40 fails
@@ -1185,4 +1253,8 @@ module.exports = {
     // ...and the quiescence check, which is what keeps a page from being written
     // before its images have loaded.
     canvasSignature,
+    // Exported for tests: the footer a page gets when an asset could not be
+    // downloaded. A unit test is the honest level for the "nothing failed" case,
+    // because proving that end to end needs an asset that genuinely downloads.
+    renderFailedAssetNotice,
 };

@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed download now says so in the note, not only in the log** (F-64).
+  A link to a file that was never written renders as an empty embed, so the page
+  looked complete and was not. The only trace was an `ERROR` line in
+  `logs/app.log`.
+
+  The link itself is still kept, which was already a deliberate decision: it
+  costs a re-run rather than correctness, and the link is what the re-run fills
+  in. What was missing is the other half of that trade, so the page now ends with
+  a notice naming what is not on disk:
+
+  ```markdown
+  > ⚠️ **2 assets could not be downloaded.**
+  >
+  > The links below point at files that are not on disk. They are left in
+  > place on purpose, so a re-run can fill them in.
+  > - `assets/report.pdf`
+  > - `assets/Page_img_3.png`
+  ```
+
+  The notice is rebuilt on every run, so it disappears by itself once a re-run
+  succeeds and there is no stale marker to clean up. It counts distinct files
+  rather than references, because the same file attached and hyperlinked on one
+  page is one missing file.
+
+  Covers all three asset types. Images, attachments and videos all rewrote their
+  link to the final file name *before* attempting the download, so a failure left
+  a dead embed for any of them — that was the eight broken links a baseline run
+  produced, and the one that survived the F-61/F-63 work.
+
 ## [0.2.2] - 2026-09-29
 
 Four fixes with one theme: **the export was writing wrong or missing data and

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<!--
+  Fixture: a page whose assets cannot be downloaded (F-64).
+
+  Two images, neither of which can be fetched: the source points at a closed
+  port on the loopback interface, so the download fails fast and for a reason
+  that has nothing to do with the exporter. That is the point - the test is
+  about what the note says afterwards, not about how a download fails.
+
+  The exports this reproduces used to be silent. A failed download leaves its
+  link in the Markdown on purpose - it costs a re-run rather than correctness,
+  and the link is what the re-run fills in - but nothing in the note said so.
+  The link pointed at a file that was never written, so the page rendered as
+  complete with an empty embed where the picture should be, and the only trace
+  was an ERROR line in a log nobody reads.
+
+  Both images use a plain http URL rather than the object URL the real UI uses.
+  A committed fixture may not name that scheme, not even in a comment, because
+  the safety test greps the whole file - and the scraper's identity test keys on
+  the outline and the alt text rather than the source, so nothing about the
+  behaviour under test is weakened by the substitution.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>unreachable assets fixture</title>
+<style>
+  /* Real dimensions: getPageContent's image test uses offsetWidth/offsetHeight. */
+  .sectionListItem, .pageListItem { display: block; width: 320px; height: 26px; }
+  .navItem { display: block; width: 300px; height: 22px; }
+  .sectionList, .pageList { display: block; width: 340px; }
+  #OreoCanvas { display: block; width: 800px; }
+  img { display: block; width: 120px; height: 90px; }
+</style>
+</head>
+<body>
+
+  <!-- ===== the section list ===== -->
+  <div class="sectionList">
+    <div id="11111111-1111-4111-8111-111111111111"
+         class="sectionListItem mainItem__item___AAAA" draggable="true">
+      <div class="navItem navItem__item____EEEE sectionItem" role="treeitem"
+           aria-label="Section One, Section. Selected." aria-selected="true"
+           data-tip="Section One" tabindex="0" data-selection-index="0">
+        <div class="mainItem__itemWrap___GGGG"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== the page list ===== -->
+  <div id="PageList" class="pageList">
+    <div class="pageNode" id="{aaaaaaaa-1111-4111-8111-111111111111}{1}">
+      <div class="pageListItem mainItem__item___AAAA" draggable="true">
+        <div class="navItem navItem__item____EEEE pageItem" role="button"
+             aria-label="Unreachable Assets, page 1 of 1, Page. Selected."
+             aria-selected="true" data-tip="Unreachable Assets" tabindex="0"
+             data-selection-index="0">
+          <div class="mainItem__itemWrap___GGGG"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    ===== the canvas =====
+
+    A title, so the page settles and is scraped, and two image outlines whose
+    sources cannot be resolved.
+  -->
+  <div id="OreoCanvas">
+    <div class="OutlineContainer">
+      <div class="TitleOutline">Unreachable Assets</div>
+    </div>
+    <div class="OutlineContainer">
+      <div>Text before the pictures.</div>
+    </div>
+    <div class="OutlineContainer">
+      <img alt="A picture that is not there"
+           src="http://127.0.0.1:1/not-there-first.png" />
+    </div>
+    <div class="OutlineContainer">
+      <img alt="Another picture that is not there"
+           src="http://127.0.0.1:1/not-there-second.png" />
+    </div>
+    <div class="OutlineContainer">
+      <div>Text after the pictures.</div>
+    </div>
+  </div>
+
+</body>
+</html>

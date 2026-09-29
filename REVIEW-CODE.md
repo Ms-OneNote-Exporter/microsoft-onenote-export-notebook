@@ -804,7 +804,7 @@ which also records the diagnosis I got wrong first.
 | F-61 | **High** | `exporter.js:527`, `scrapers.js:267` | A page that had not finished rendering was written as a 15-byte note containing the string `Page Contents`, and the run reported success | **fixed** — wait for the requested page to be *settled* on the canvas: the right title, exactly one copy of it, and two consecutive identical readings (images load after the outlines do). Re-select once, then fail the page by name with nothing written, naming what the canvas really showed |
 | F-62 | **High** | `exporter.js:294` | A section group that had not finished expanding returned an empty list, which was treated as "this group is empty": the whole subtree was skipped **with a warning that did not affect the exit status** | **fixed** — wait for the group's children, and click only while `aria-expanded` says collapsed, since selecting a group is a toggle. Fail the group by name if the children never appear. Found by a verification run of F-61 that lost 8 pages and still printed `Export complete!` with exit 0; the group's failure turned out to be a symptom of F-61's desynchronised canvas |
 | **F-63** | **High** | `scrapers.js:492` | **Fixed.** Regression from F-60: attachments were downloaded but no longer linked from the note. The `[[assets/…]]` embed is emitted by a turndown rule keyed on `data-local-file` (`parser.js:26`), and turndown never consults custom rules for a *blank* node — and F-60's dedup kept OneNote's empty click overlay, so the id went there and no embed was produced. `Complete_Paris_9th_Arrondissement_Guide.docx` and `attached_file.bin` sat on disk referenced by **zero** notes | **fixed** — `data-local-file` (renders the link) and `data-one-attach-id` (marks the element to click) are different jobs and were conflated; the id now goes on the element that shows the file's name. Live: 12 assets, 0 orphaned, duplicate `_1` downloads gone, dangling links 8 → 1 |
-| **F-64** | Medium | `exporter.js:714` | **Open — pre-existing, not a regression.** An asset whose download fails still gets an embed, because the attribute is rewritten to the final file name *before* `downloadAttachment` is attempted. The note links to a file that was never written | **not fixed** — needs a product decision: on a failed download, should the note show the filename as plain text, or a visible "download failed" marker? Both are defensible and neither is obviously right, which is why it is being asked about rather than decided |
+| **F-64** | Medium | `exporter.js:695`, `714`, `750` | **Fixed.** Images, attachments and videos all rewrote their link to the final file name *before* attempting the download, so a failed download left `[[assets/…]]` pointing at a file that was never written. The page rendered as complete with an empty embed; the only trace was an `ERROR` in the log. 8 occurrences in a baseline run, 1 after the F-61/F-63 work | **fixed** — the link is kept, as the README's trade-off intends, and the page now ends with a notice naming what is missing, rebuilt each run so it self-clears on a re-run. Covers all three asset types. **Correction:** this was first written up as a "pre-existing defect needing a product decision", which was wrong — the README already documented the behaviour as deliberate ("it costs a re-run rather than correctness"). The gap was the missing half of a documented trade-off, not an unintended defect |
 
 | F-34 | Low | `downloadStrategies.js:150` | Dangling `downloadPromise` can reject unhandled | open (same class fixed in `navigator.js`, `d878ceb`) |
 | F-33 | Medium | `downloadStrategies.js:88` | Office Online automation is EN/FR only, with no `Accept-Language` set | open |
@@ -924,31 +924,30 @@ what happens", and the fix should have been a log line, not a throw.
 
 ### Next session, in priority order
 
-1. **F-64 — what a failed download looks like in the note.** The exporter rewrites
-   `data-local-file` to the final file name *before* attempting the download, so
-   a download that fails still leaves `[[assets/…]]` pointing at a file that was
-   never written. One occurrence in the last live run, against 8 broken links on
-   `main` before the F-61/F-63 work, so this is the last of that family rather
-   than a new one. Deliberately not fixed, because the two reasonable answers
-   change what the user's vault looks like and that is the user's call: leave the
-   filename as plain text, or emit a visible `⚠️ <name> (download failed)` so a
-   re-run has an obvious target. Leaning towards the marker — a silent plain-text
-   filename is the same shape of problem as the ones just fixed, where the note
-   did not tell you what went wrong.
-2. **F-44 / F-45 / F-46 — Docker.** `COPY . /app` instead of `git clone`, `npm ci`, pin the
+1. **F-44 / F-45 / F-46 — Docker.** `COPY . /app` instead of `git clone`, `npm ci`, pin the
    base image, non-root user, `.dockerignore`, `--init` + `/dev/shm` for Chromium; assert the
    export exit status in `entrypoint.sh`; fix the `oneexp_` vs `one-` name mismatch and the
    hardcoded sibling-repo path in `start-container.sh`. Self-contained, no product risk.
-3. **F-36 / F-37 — logger.** Add level gating (a `--verbose` flag, or honour an env var) and
+2. **F-36 / F-37 — logger.** Add level gating (a `--verbose` flag, or honour an env var) and
    move the log path out of `node_modules` for global installs. Touches every call site's
    behaviour, so it wants its own commit and a note in the README.
-4. **F-32 — per-attachment time budget.** Cap the retry × strategy multiplication, and record
+3. **F-32 — per-attachment time budget.** Cap the retry × strategy multiplication, and record
    per-strategy success counts so the ~72s Office Online path can be justified or dropped.
-5. **F-23 — extract the attachment heuristics** into a pure module with tests, now that the
+4. **F-23 — extract the attachment heuristics** into a pure module with tests, now that the
    harness exists. Biggest testability win, and a precondition for the fixture tests.
-6. **F-40 / F-48 — `auth.json` validation, 0600 dumps, close the browser on context failure.**
-7. **Duplicated `runExport` flow** (44% textual overlap) — only after the fixture tests exist.
-8. **README** (F-50) and the remaining Low/Info items.
+5. **F-40 / F-48 — `auth.json` validation, 0600 dumps, close the browser on context failure.**
+6. **Duplicated `runExport` flow** (44% textual overlap) — only after the fixture tests exist.
+7. **README** (F-50) and the remaining Low/Info items.
+
+**Now open, and worth a decision rather than an implementation.** A failed asset
+download is visible in the note (F-64), logged, and still exits `0`, with
+`Total Assets` counting only what succeeded. So the run's own summary does not
+mention the failure and a pipeline keying on the exit code sees success. F-01
+established that the CLI "always reports the truth", and this is the remaining
+place it does not: either `Total Assets` gains a "failed" companion, or a run
+with failed assets exits non-zero. Both change what automation sees, so it wants
+the treatment F-64 just got — a deliberate recorded answer, not a quietly-taken
+one.
 
 ## 9. Open questions
 
