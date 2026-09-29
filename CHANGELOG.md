@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **An empty section group now says which kind of empty it was.** The warning that
+  fires when a group yields no sections used to read "No items found inside group X.
+  If this group is not really empty, its sections were skipped" — a guess, in the
+  one message that is the entire record of a subtree going missing. There are three
+  different situations behind an empty result and they call for different responses:
+
+  | Reason | What happened | What to do |
+  |--------|----------------|------------|
+  | `no-parent` | the id is not in the DOM; OneNote re-rendered | re-run; file a dump if it repeats |
+  | `no-container` | the row is there, its contents are not | re-run — it had not finished expanding |
+  | `empty` | a group with no sections, which is legal in OneNote | nothing |
+
+  The third now logs nothing at all. It was the common case in a healthy notebook,
+  and warning about it trained people to ignore the warnings that matter.
+
 ## [0.3.1] - 2026-09-29
 
 A **patch**, not a minor: this removes a dependence on the machine the export runs

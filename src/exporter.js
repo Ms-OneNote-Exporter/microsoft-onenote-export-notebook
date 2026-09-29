@@ -346,6 +346,9 @@ async function waitForPageContent(contentFrame, expectedTitle, timeoutMs = 15000
  * a failure: a spurious failure costs one line in the summary, while a missed
  * expansion costs every page underneath it, silently.
  *
+ * The final zero carries the reason it was a zero (F-22), so a group that was never
+ * found in the DOM reads differently from one that was found and was empty.
+ *
  * @param {import('playwright').Frame} contentFrame - The notebook frame
  * @param {string} groupId - Id of the group whose children are wanted
  * @param {number} [timeoutMs] - How long to wait before giving up
@@ -353,12 +356,21 @@ async function waitForPageContent(contentFrame, expectedTitle, timeoutMs = 15000
  */
 async function waitForGroupItems(contentFrame, groupId, timeoutMs = 15000) {
     const deadline = Date.now() + timeoutMs;
+    let reason = null;
 
     do {
-        const items = await getSections(contentFrame, groupId);
-        if (items.length > 0) return items.length;
+        const result = await getSections(contentFrame, groupId);
+        if (result.items.length > 0) return result.items.length;
+        // Remember why, but only the first kind of nothing: a later poll can see a
+        // worse reason than an earlier one, and 'no-parent' is the least
+        // informative of the three, so the first observation is the most useful.
+        if (reason === null) reason = result.reason;
         await contentFrame.waitForTimeout(250);
     } while (Date.now() < deadline);
+
+    logger.debug(
+        `      Group ${groupId} yielded no sections in ${timeoutMs}ms (${reason || 'empty'})`
+    );
 
     return 0;
 }
@@ -468,19 +480,65 @@ function exitCodeForStats(stats) {
     return missing > 0 ? 3 : 0;
 }
 
+/**
+ * The warning for a section lookup that came back empty, or '' when there is
+ * nothing to warn about.
+ *
+ * F-22's residual. The old message said "No items found inside group X. If this
+ * group is not really empty, its sections were skipped" - which is a guess, and
+ * a guess in a message that is the only evidence a subtree went missing. getSections
+ * now reports *why* it found nothing, and each reason has a different remedy:
+ *
+ *   no-parent    OneNote re-rendered and the id is stale. Re-run; if it repeats,
+ *                the section tree moved and this is a scraper bug worth a dump.
+ *   no-container The row is there but its contents are not. Almost always a group
+ *                that has not finished expanding, so this is the one to re-run for.
+ *   empty        A group with no sections is legal in OneNote. Silence is correct.
+ *
+ * In practice the 'empty' branch is nearly unreachable: the caller has already
+ * waited out a group expansion and failed the group by name if it found nothing
+ * (F-62), so it recurses into a group only once the group has proved it has
+ * children. It is here because the function is asked "what does an empty result
+ * mean" and answering that honestly for all three is cheaper than answering it
+ * correctly for two.
+ *
+ * Pure, so the wording is testable without a browser - and it is the wording a
+ * user reads to decide whether to re-run or to file a dump.
+ *
+ * @param {string|null} parentId - Group being looked into, or null at the top level
+ * @param {string|null} reason - Why the lookup was empty, from getSections
+ * @returns {string} A warning to log, or '' when the empty result needs none
+ */
+function emptyLookupWarning(parentId, reason) {
+    if (parentId && reason === 'empty') {
+        // A group with nothing in it is ordinary. Warning about it trains people to
+        // ignore the warnings that matter.
+        return '';
+    }
+
+    if (parentId) {
+        const cause = reason === 'no-container'
+            ? 'its contents are not in the DOM yet, which usually means it had not finished expanding'
+            : 'it is no longer in the DOM, which means OneNote re-rendered and its id is stale';
+        return `Group ${parentId} has no sections: ${cause}. ` +
+            'Its pages were skipped - re-run to pick them up, and use --dodump if it repeats.';
+    }
+
+    if (reason) {
+        return `No sections or groups found at the top level (${reason}). ` +
+            'The notebook may be empty, or the OneNote DOM may have changed.';
+    }
+
+    return 'No sections or groups found at the top level. The notebook may be empty, ' +
+        'or the OneNote DOM may have changed.';
+}
+
 async function processSections(contentFrame, outputDir, td, options, pageIdMap, processedItems = new Set(), parentId = null, stats = newStats()) {
-    const sections = await getSections(contentFrame, parentId);
-    if (sections.length === 0 && parentId) {
-        // Inside a group, an empty result usually means the group container could
-        // not be located, not that the group is empty. At debug level this made a
-        // whole subtree disappear from the export without a word.
-        logger.warn(
-            `No items found inside group ${parentId}. If this group is not really empty, ` +
-            'its sections were skipped - re-run with --dodump and check logs/dumps.'
-        );
-    } else if (sections.length === 0) {
-        logger.warn('No sections or groups found at the top level. The notebook may be empty, or the OneNote DOM may have changed.');
-    } else {
+    const { items: sections, reason } = await getSections(contentFrame, parentId);
+    const warning = emptyLookupWarning(parentId, reason);
+    if (warning) {
+        logger.warn(warning);
+    } else if (sections.length > 0) {
         logger.info(`Found ${sections.length} items at current level.`);
     }
 
@@ -1323,6 +1381,10 @@ module.exports = {
     // for". It is the check that keeps a page from being written with the
     // previous page's content, so it is worth testing directly.
     isRequestedPageOnScreen,
+    // Exported for tests: the wording of the "this group yielded nothing" warning.
+    // It is the only evidence a subtree went missing, and each reason has a
+    // different remedy, so which words appear is part of the behaviour.
+    emptyLookupWarning,
     // ...and the quiescence check, which is what keeps a page from being written
     // before its images have loaded.
     canvasSignature,

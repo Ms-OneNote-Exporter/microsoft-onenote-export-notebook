@@ -8,8 +8,21 @@ const { withRetry } = require('./utils/retry');
 
 /**
  * Scrapes the list of sections and section groups from the current notebook view.
+ *
+ * Returns the items *and* a reason for an empty result, because "this group has no
+ * sections" and "I could not find this group's container" are opposite news and the
+ * caller cannot tell them apart from the items alone. F-22: a missing container made
+ * a whole section group and its subtree vanish from the export, and the only hint was
+ * a warning that could not say which of the two had happened.
+ *
+ * `reason` is null whenever any item was found, and otherwise one of:
+ *   'no-parent'    - parentId is not in the DOM at all (re-render, or a stale id)
+ *   'no-container' - the parent is there, but nothing on it looks like a [role=group]
+ *   'empty'        - the container was found and genuinely holds no sections
+ *
  * @param {object} frame - The Playwright frame object.
- * @returns {Promise<Array>} - List of items { id, name, type: 'section'|'group' }.
+ * @param {string} [parentId] - Group whose children are wanted; null for the top level.
+ * @returns {Promise<{items: Array, reason: string|null}>} Items { id, name, type }.
  */
 async function getSections(frame, parentId = null) {
     return frame.evaluate((pid) => {
@@ -54,11 +67,14 @@ async function getSections(frame, parentId = null) {
                     if (foundGroup) {
                         searchContainer = foundGroup;
                     } else {
-                        return [];
+                        // The group row is in the DOM but nothing on it looks like its
+                        // container. Either OneNote re-rendered and this id is stale, or
+                        // the markup moved. Say which kind of nothing this is.
+                        return { items: [], reason: 'no-container' };
                     }
                 }
             } else {
-                return [];
+                return { items: [], reason: 'no-parent' };
             }
         }
 
@@ -109,7 +125,7 @@ async function getSections(frame, parentId = null) {
         });
 
 
-        return results;
+        return { items: results, reason: null };
     }, parentId);
 }
 

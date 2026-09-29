@@ -55,7 +55,7 @@ describe('scrapers against captured fixtures', () => {
     describe('getSections (STEP 2/3)', () => {
         itBrowser('returns the top-level sections and the group', async () => {
             await loadFixture('section-list.html');
-            const items = await getSections(page, null);
+            const { items } = await getSections(page, null);
 
             expect(items).toHaveLength(3);
             expect(items.map((i) => i.type)).toEqual(['section', 'section', 'group']);
@@ -63,7 +63,7 @@ describe('scrapers against captured fixtures', () => {
 
         itBrowser('reads section names from the navItem aria-label', async () => {
             await loadFixture('section-list.html');
-            const items = await getSections(page, null);
+            const { items } = await getSections(page, null);
 
             expect(items[0].name).toBe('Section Alpha');
             expect(items[1].name).toBe('Section Beta');
@@ -72,7 +72,7 @@ describe('scrapers against captured fixtures', () => {
 
         itBrowser('strips the accessibility suffixes from the label', async () => {
             await loadFixture('section-list.html');
-            const [first] = await getSections(page, null);
+            const { items: [first] } = await getSections(page, null);
 
             // The real label is:
             //   "Section Alpha, Section. Selected. Press Tab to navigate to ..."
@@ -83,7 +83,7 @@ describe('scrapers against captured fixtures', () => {
 
         itBrowser('uses the element id as the section id', async () => {
             await loadFixture('section-list.html');
-            const items = await getSections(page, null);
+            const { items } = await getSections(page, null);
 
             expect(items[0].id).toBe('11111111-1111-4111-8111-111111111111');
         });
@@ -92,7 +92,8 @@ describe('scrapers against captured fixtures', () => {
         // SharePoint folder URL, not a UUID. linkResolver has to cope with that.
         itBrowser('keeps a group id that is a URL-encoded SharePoint path', async () => {
             await loadFixture('section-list.html');
-            const group = (await getSections(page, null)).find((i) => i.type === 'group');
+            const { items } = await getSections(page, null);
+            const group = items.find((i) => i.type === 'group');
 
             expect(group.id).toMatch(/^https%3A%2F%2F/);
             expect(decodeURIComponent(group.id)).toContain('sharepoint.com');
@@ -100,7 +101,7 @@ describe('scrapers against captured fixtures', () => {
 
         itBrowser('returns only direct children when a group is expanded', async () => {
             await loadFixture('section-list-nested.html');
-            const top = await getSections(page, null);
+            const { items: top } = await getSections(page, null);
 
             // The nested items are inside a [role="group"] wrapper and must not
             // leak into the top level, or a recursive export would never terminate.
@@ -110,10 +111,10 @@ describe('scrapers against captured fixtures', () => {
 
         itBrowser('descends into an expanded group', async () => {
             await loadFixture('section-list-nested.html');
-            const top = await getSections(page, null);
+            const { items: top } = await getSections(page, null);
             const group = top.find((i) => i.type === 'group');
 
-            const children = await getSections(page, group.id);
+            const { items: children } = await getSections(page, group.id);
 
             expect(children).toHaveLength(2);
             expect(children.map((i) => i.name)).toEqual(['Nested Section One', 'Nested Group']);
@@ -122,11 +123,12 @@ describe('scrapers against captured fixtures', () => {
 
         itBrowser('handles a group nested inside a group', async () => {
             await loadFixture('section-list-nested.html');
-            const top = await getSections(page, null);
+            const { items: top } = await getSections(page, null);
             const outer = top.find((i) => i.type === 'group');
-            const inner = (await getSections(page, outer.id)).find((i) => i.type === 'group');
+            const { items: outerItems } = await getSections(page, outer.id);
+            const inner = outerItems.find((i) => i.type === 'group');
 
-            const deep = await getSections(page, inner.id);
+            const { items: deep } = await getSections(page, inner.id);
 
             expect(deep).toHaveLength(1);
             expect(deep[0].name).toBe('Deeply Nested Section');
@@ -135,8 +137,34 @@ describe('scrapers against captured fixtures', () => {
         itBrowser('returns an empty array for an id that is not in the DOM', async () => {
             // F-22: this is the case that used to disappear silently.
             await loadFixture('section-list-nested.html');
-            const items = await getSections(page, 'no-such-id');
+            const { items } = await getSections(page, 'no-such-id');
             expect(items).toEqual([]);
+        });
+
+        // F-22's residual: an empty list said nothing about *why*, so the caller
+        // could not tell a group that is empty from one whose container was never
+        // found - and those are opposite news with different remedies.
+        itBrowser('says the parent is missing when the id is not in the DOM', async () => {
+            await loadFixture('section-list-nested.html');
+            const { reason } = await getSections(page, 'no-such-id');
+            expect(reason).toBe('no-parent');
+        });
+
+        itBrowser('reports no reason at all when the lookup succeeded', async () => {
+            await loadFixture('section-list.html');
+            const { reason } = await getSections(page, null);
+            // A reason is only ever set for an empty result.
+            expect(reason).toBeNull();
+        });
+
+        itBrowser('reports no reason when a group has children', async () => {
+            await loadFixture('section-list-nested.html');
+            const { items: top } = await getSections(page, null);
+            const group = top.find((i) => i.type === 'group');
+
+            const { items, reason } = await getSections(page, group.id);
+            expect(items.length).toBeGreaterThan(0);
+            expect(reason).toBeNull();
         });
     });
 
