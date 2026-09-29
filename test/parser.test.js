@@ -121,4 +121,100 @@ describe('createMarkdownConverter', () => {
             expect(md).toContain('kept');
         });
     });
+
+    // The DOM below is the shape `debug_page_Prevent BYOD with Intune.html` holds,
+    // copied out of the capture: a `ListMarker` span inside the `ul > li`, carrying
+    // the glyph OneNote draws. That is the real thing, not a simplification of it.
+    const listItem = (glyph, text) =>
+        `<p class="Paragraph">` +
+        `<span class="ListMarkerWrappingSpan"><span class="ListMarker" aria-hidden="true">${glyph}</span></span>` +
+        `<span class="TextRun"><span class="NormalTextRun">${text}</span></span>` +
+        `<span class="EOP">&nbsp;</span></p>`;
+
+    const bulletList = (glyph, text, nested = '') =>
+        `<ul class="BulletListStyle1" role="list"><li role="listitem" class="OutlineElement Ltr">` +
+        `<div class="ParaWrappingDiv">${listItem(glyph, text)}</div>${nested}</li></ul>`;
+
+    describe('the bullet OneNote draws itself (the `* ○Here we block BYOD` defect)', () => {
+        // OneNote stores the bullet glyph as text inside a `ListMarker` span, in the
+        // same `li` that Turndown renders as a Markdown list item. Turning down that
+        // `li` yields `*   `, and the glyph yields `○`, so the item reached the vault
+        // with both: Obsidian drew a bullet and then a stray circle glued to the
+        // first word. The note was structurally correct and visually wrong, which is
+        // why nothing failed and nothing said so.
+
+        it('keeps the Markdown list item and drops the glyph', () => {
+            const md = td.turndown(bulletList('○', 'Here we block BYOD'));
+            expect(md.trim()).toBe('*   Here we block BYOD');
+        });
+
+        it('drops every bullet glyph OneNote uses, not just this one', () => {
+            // The two the Redmo page uses, plus the other glyphs OneNote's bullet
+            // styles are built from. A rule that only knew `○` would leave the rest
+            // of the notebook broken in exactly the same way.
+            for (const glyph of ['•', '○', '▪', '■', '☐', '☒', '✔', 'o', '§']) {
+                expect(td.turndown(bulletList(glyph, 'Item')).trim())
+                    .toBe('*   Item');
+            }
+        });
+
+        it('keeps the nesting, so the level is still a level', () => {
+            // The page nests three deep. Dropping the glyph must not flatten the
+            // list into its top level - indentation is structure too, and a rule
+            // that reached in and unwrapped the `li` would lose it.
+            const html = bulletList('•', 'Device enrollment restrictions',
+                bulletList('○', 'Here we block BYOD'));
+            const md = td.turndown(html);
+            const lines = md.split('\n').filter((l) => l.trim().startsWith('*'));
+
+            expect(lines).toHaveLength(2);
+            expect(lines[0].match(/^\s*/)[0].length)
+                .toBeLessThan(lines[1].match(/^\s*/)[0].length);
+        });
+
+        it('leaves the item text alone', () => {
+            // The defect was the glyph, not the words. Anything that trims or
+            // reflows the text alongside it would trade one bug for another.
+            const md = td.turndown(bulletList('•', 'IMEI (for android) that are allowed to enroll'));
+            expect(md).toContain('IMEI (for android) that are allowed to enroll');
+        });
+
+        it('keeps a marker that is not in a list, because there is nothing else', () => {
+            // OneNote marks some outline items without the surrounding `li`. There
+            // the glyph is the only trace that the line was an item at all, so
+            // dropping it would delete content rather than decoration.
+            const html = '<p><span class="ListMarker">○</span><span class="TextRun">Bare</span></p>';
+            expect(td.turndown(html)).toContain('○');
+        });
+
+        it('keeps a number that only the marker carries', () => {
+            // Turndown renders a `ul` as `*` whatever the marker says, so for a
+            // numbered list marked up as a `ul` the glyph is the ONLY trace of the
+            // numbering. Dropping it would turn 1/2/3 into three identical bullets -
+            // a worse defect than the one this rule exists to remove. The space is
+            // added here because the DOM has none: the marker and the text are
+            // adjacent spans, so the untouched output is `1.First`.
+            expect(td.turndown(bulletList('1.', 'First')).trim()).toBe('*   1. First');
+            expect(td.turndown(bulletList('iv)', 'Fourth')).trim()).toBe('*   iv) Fourth');
+        });
+
+        it('drops a number in an `ol`, which renders its own', () => {
+            // The mirror of the case above, and the reason the rule checks the
+            // parent rather than only the glyph: here Turndown produces `1.` from
+            // the `ol` itself, so the marker's `1.` is a duplicate.
+            const html = '<ol><li><p>' +
+                '<span class="ListMarkerWrappingSpan"><span class="ListMarker">1.</span></span>' +
+                '<span class="TextRun">First</span></p></li></ol>';
+            const md = td.turndown(html);
+            expect(md).toMatch(/1\.\s+First/);
+            expect(md.replace(/1\.\s+First/, '')).not.toContain('1.');
+        });
+
+        it('leaves a typed-in circle in the text, which is not a marker', () => {
+            // A user who writes "○ check this" in a plain paragraph means the
+            // character. Only the `ListMarker` span is the renderer talking.
+            const html = '<p><span class="TextRun">○ check this</span></p>';
+            expect(td.turndown(html)).toContain('○ check this');
+        });
+    });
 });
