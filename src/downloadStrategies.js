@@ -2,6 +2,33 @@ const fs = require('fs-extra');
 const path = require('path');
 const Logger = require('./utils/logger');
 const { withRetry, permanent } = require('./utils/retry');
+const { newStrategyStats, recordAttempt, recordWin, recordFailure } = require('./utils/strategyStats');
+
+/**
+ * Counters for this run's attachment downloads, filled in as strategies win or
+ * fail so the summary can say which one earned its cost (F-32). See
+ * utils/strategyStats for why the Direct strategy needs that evidence.
+ *
+ * Deliberately module-level rather than threaded through downloadAttachment: it
+ * is one value for the whole process, the export is single-threaded, and adding
+ * a ninth parameter to a function that already takes a frame, an info object and
+ * a path would be a worse trade than a small, resettable singleton. The tests
+ * call resetStrategyStats() so a suite cannot inherit another's counts.
+ */
+let strategyStats = newStrategyStats();
+
+/**
+ * The counters for this run.
+ * @returns {object} The live counters, held by reference
+ */
+function getStrategyStats() {
+    return strategyStats;
+}
+
+/** Zeroes the counters, for the next run or for a test. */
+function resetStrategyStats() {
+    strategyStats = newStrategyStats();
+}
 
 /**
  * Strategy 1: URL Transformation (Direct Download)
@@ -340,20 +367,27 @@ async function downloadAttachment(contentFrame, info, outputPath) {
         const context = page.context();
 
         // 1. Try direct download (Cloud Page Navigation for SharePoint/OneDrive)
+        //    Counted on entry, not on success: "entered 40 times, won 0" is the
+        //    finding, and it is invisible if the count only happens on a win.
+        recordAttempt(strategyStats, 'direct');
         if (await tryDirectDownload(page, info.src, outputPath)) {
+            recordWin(strategyStats, 'direct');
             Logger.success(`      [Success] Downloaded via Strategy: Direct (Cloud Page)`);
             return true;
         }
 
         // 2. Try UI click
+        recordAttempt(strategyStats, 'ui-click');
         const uiResult = await tryUIClick(contentFrame, info.id, outputPath);
         if (uiResult.ok) {
+            recordWin(strategyStats, 'ui-click');
             Logger.success(`      [Success] Downloaded via Strategy: UI Click`);
             return true;
         }
 
         // 3. Fallback: direct request on the original URL (non-forced)
         if (info.src) {
+            recordAttempt(strategyStats, 'fallback');
             Logger.info(`      [Strategy: Fallback] Attempting direct request...`);
             try {
                 const response = await context.request.get(info.src, { timeout: 30000 });
@@ -361,6 +395,7 @@ async function downloadAttachment(contentFrame, info, outputPath) {
                     const contentType = response.headers()['content-type'] || '';
                     if (!contentType.includes('text/html')) {
                         await fs.writeFile(outputPath, await response.body());
+                        recordWin(strategyStats, 'fallback');
                         Logger.success(`      [Success] Downloaded via Strategy: Fallback`);
                         return true;
                     }
@@ -370,6 +405,7 @@ async function downloadAttachment(contentFrame, info, outputPath) {
             }
         }
 
+        recordFailure(strategyStats);
         const error = new Error(`All download strategies failed for ${info.originalName}`);
 
         // A missing clickable element is the one case where retrying is provably
@@ -401,5 +437,9 @@ async function downloadAttachment(contentFrame, info, outputPath) {
 }
 
 module.exports = {
-    downloadAttachment
+    downloadAttachment,
+    // Exported so the export's summary can report them, and so tests can assert
+    // the counters rather than parsing log output.
+    getStrategyStats,
+    resetStrategyStats
 };
