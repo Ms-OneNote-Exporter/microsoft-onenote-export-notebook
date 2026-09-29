@@ -4,7 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.5] - 2026-09-29
+
+A **patch**, and the reasoning is worth stating because the gap from 0.3.1 looks
+odd. It skips 0.3.2–0.3.4 because the numbering is tied to the open findings in
+`REVIEW-CODE.md`, which are published one per version as each is closed — 0.3.2
+through 0.3.4 are the three Medium findings that had to land in their own commits,
+and 0.3.5 is the fourth. The number reflects the review's remaining work, not a
+semantic difference between releases.
+
+Nothing here changes the CLI contract, an exit code, or the output of a correct
+export. Two of the four make a diagnostic visible that used to be discarded, and
+one widens a file-extension list by three entries. The notable behaviour change is
+small and one-directional: `.doc`, `.xls` and `.ppt` attachments are now
+recognised where before they were treated as hyperlinks and not downloaded.
 
 ### Fixed
 
