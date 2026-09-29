@@ -1,9 +1,14 @@
-// NOTE: there is deliberately no `require('./utils/logger')` here. The DOM
-// work in this file lives inside callbacks that Playwright serialises and runs
-// in the browser, where a Node module is not in scope - calling the logger from
-// there would throw. The consequence is that scraper diagnostics go to the
-// browser console and never reach logs/app.log; the real fix is to return
-// diagnostic data from evaluate() and log it on the Node side.
+// The DOM work in this file lives inside callbacks that Playwright serialises and
+// runs in the browser, where a Node module is not in scope - calling the logger
+// from inside one of those callbacks would throw `logger is not defined` and kill
+// the extraction. That is why there is no `console` here either: the browser
+// console is not a log, it is a place nobody is looking during an unattended run.
+//
+// The rule this file follows instead: collect diagnostic strings inside
+// evaluate(), return them with the result, and log them on the Node side after
+// the call returns. getPageContent is the worked example. Functions that take a
+// frame and only ever *read* from it can use the logger normally.
+const logger = require('./utils/logger');
 const { withRetry } = require('./utils/retry');
 
 /**
@@ -205,11 +210,33 @@ async function selectSection(frame, sectionId) {
 
 /**
  * Scrapes the content of the currently selected page.
+ *
+ * The DOM work runs inside a callback that Playwright serialises and executes in
+ * the browser, where a Node module is not in scope - calling the logger from
+ * there throws `logger is not defined` and kills the extraction. That is why this
+ * file has no `require('./utils/logger')` and why the scrape used to reach for
+ * `console` instead.
+ *
+ * `console` is the wrong destination either way. It writes to the browser's
+ * console, which nobody has open during an unattended run, so the most useful
+ * scraper diagnostics - which attachment was found, and which click marker FAILED
+ * to match - never reached logs/app.log (F-02). The one that says
+ * "UI Click strategy will fail" is exactly the line you want when an attachment
+ * could not be downloaded, and it was going nowhere.
+ *
+ * So the diagnostics are *returned* and logged on the Node side, where the logger
+ * exists. The browser callback only collects strings.
+ *
  * @param {object} frame - The Playwright frame object.
- * @returns {Promise<object>} - { title, contentHtml }.
+ * @returns {Promise<object>} { title, contentHtml, images, attachments, ..., diagnostics }
  */
 async function getPageContent(frame) {
-    return frame.evaluate(() => {
+    const content = await frame.evaluate(() => {
+        // Diagnostics collected here, logged by the caller. See the note above:
+        // the Node logger does not exist in this context.
+        const diagnostics = [];
+        const note = (level, message) => diagnostics.push({ level, message });
+
         // Find the main canvas/content area
         const canvas = document.querySelector('#OreoCanvas') ||
             document.querySelector('.canvasContainer') ||
@@ -503,12 +530,11 @@ async function getPageContent(frame) {
                 else if (fileExtRegex.test(ariaLabel)) originalName = ariaLabel;
                 else if (fileExtRegex.test(text.split('\n')[0].trim())) originalName = text.split('\n')[0].trim();
 
-                // NOTE: this callback is serialised by Playwright and executed
-                // inside the page, so the Node logger does NOT exist here and
-                // console is the only thing available. See the eslint-disable
-                // at the top of getPageContent.
-                // eslint-disable-next-line no-console
-                console.debug(
+                // Collected here and logged by the caller; see the note at the top
+                // of getPageContent. The element shape and the attributes are
+                // what make a wrong attachment heuristic debuggable, so all of it
+                // is kept.
+                note('debug',
                     `[Scraper] attachment ${attachId} <${link.tagName}> ` +
                     `title="${title}" aria-label="${ariaLabel}" ` +
                     `text="${text.substring(0, 30)}" href="${href.substring(0, 50)}"`
@@ -542,8 +568,7 @@ async function getPageContent(frame) {
                 }
                 if (!originalName) originalName = 'attached_file';
 
-                // eslint-disable-next-line no-console
-                console.debug(`[Scraper] Detected attachment: ${originalName} (ID: ${attachId}, Type: ${link.tagName})`);
+                note('debug', `[Scraper] Detected attachment: ${originalName} (ID: ${attachId}, Type: ${link.tagName})`);
                 attachmentInfos.push({ id: attachId, src: href, originalName: originalName, isCloud: isCloud });
 
                 // The id goes on the element that SHOWS the name, not on whichever
@@ -586,12 +611,14 @@ async function getPageContent(frame) {
                 }
 
                 if (realLink) {
-                    // eslint-disable-next-line no-console
-                    console.debug(`[Scraper] Successfully matched real element for ${attachId}`);
+                    note('debug', `[Scraper] Successfully matched real element for ${attachId}`);
                     realLink.setAttribute('data-one-attach-id', attachId);
                 } else {
-                    // eslint-disable-next-line no-console
-                    console.warn(`[Scraper] FAILED to match real element for ${attachId}. UI Click strategy will fail.`);
+                    // The most valuable line in this function. An attachment with
+                    // no click marker can never be fetched by the UI Click
+                    // strategy, and until this reached logs/app.log the only
+                    // evidence was a browser console nobody was watching (F-02).
+                    note('warn', `[Scraper] FAILED to match real element for ${attachId}. UI Click strategy will fail.`);
                 }
                 return;
             }
@@ -701,9 +728,29 @@ async function getPageContent(frame) {
             // has at least a title outline, so zero means the canvas was empty -
             // the page had not rendered yet, not that it was blank. The caller
             // uses this to refuse to write a stub (F-61).
-            outlinesFound: outlines.length
+            outlinesFound: outlines.length,
+            // Logged by the caller, which has a logger. See the note at the top
+            // of this function.
+            diagnostics
         };
     });
+
+    // The Node side, where the logger exists. Every scraper diagnostic now lands
+    // in logs/app.log instead of a browser console nobody has open (F-02).
+    //
+    // The level each message was written with is preserved rather than flattened
+    // to debug: the "FAILED to match real element" line is a warning because it
+    // predicts a download that cannot succeed, and flattening it would bury the
+    // one line that matters under the twenty that do not.
+    for (const { level, message } of content.diagnostics || []) {
+        if (level === 'warn') {
+            logger.warn(message);
+        } else {
+            logger.debug(message);
+        }
+    }
+
+    return content;
 }
 
 /**
