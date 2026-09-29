@@ -6,6 +6,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-09-29
+
+A **patch**. It changes the output of a correct export — that is the whole of it —
+but not the CLI contract, not an exit code, and not anything a consumer has to
+react to, so it is not a minor.
+
+Two things, one of which is a visible defect in the notes themselves:
+
+- a list item no longer carries a second, literal bullet;
+- `npm test` now checks the review document's own arithmetic.
+
+### Fixed
+
+- **List items no longer carry a second, literal bullet.**
+  OneNote draws its own bullet next to every list item and keeps it in the DOM as a
+  `ListMarker` span, *inside* the `<ul><li>` that the converter already turns into a
+  Markdown list item. Both survived, so every bullet in the output carried its
+  marker twice:
+
+  ```markdown
+  *   ○Here we block BYOD
+  ```
+
+  The `*` is the Markdown item; the `○` is the glyph OneNote drew to decorate it.
+  In Obsidian that reads as a bullet followed by a stray circle glued to the first
+  word — "OHere we add" — which is how the *Prevent BYOD with Intune* page of the
+  *Redmo* notebook rendered. The note was structurally correct and visually wrong,
+  which is why nothing failed, nothing warned, and the run reported success.
+
+  The glyph is `aria-hidden="true"` in the page: decoration for a structure already
+  present in the markup, so `src/parser.js` now drops it. Three cases are kept
+  rather than dropped, each for a reason that is a defect if you get it wrong:
+
+  - a `ListMarker` that is **not inside a list item** is the only trace that the
+    line was an item at all — dropping it would delete content, not decoration;
+  - a marker in an `<ol>` is dropped, because the `<ol>` already renders the
+    numbers and the marker duplicates them;
+  - a marker in a `<ul>` that is **numbered** (`1.`, `iv)`) is kept, with the space
+    the DOM never had, because a `<ul>` renders as `*` whatever the marker says — so
+    there the glyph is the only evidence of the numbering, and removing it would
+    flatten 1/2/3 into three indistinguishable bullets. A worse defect than the one
+    being fixed.
+
+  Covered by 9 new tests in `test/parser.test.js`, including every bullet glyph
+  OneNote's list styles are built from, so a rule that only knew `○` would not pass.
+
+  Nothing else about the output changes: the list, its indentation and its text are
+  as they were. Verified by re-exporting the *Redmo* notebook — no `•○▪■` survives
+  anywhere in the note.
+
 ### Added
 
 - **`npm test` now checks the review document's own arithmetic.**

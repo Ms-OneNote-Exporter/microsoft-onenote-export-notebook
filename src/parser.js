@@ -12,6 +12,69 @@ function createMarkdownConverter() {
     });
     td.use(gfm);
 
+    // OneNote draws its own bullet next to every list item and leaves it in the DOM
+    // as a `ListMarker` span, sitting *inside* the `ul > li` that Turndown has
+    // already turned into a Markdown list item. Both survive the conversion, so the
+    // note carries the marker twice:
+    //
+    //     *   ○Here we block BYOD
+    //
+    // The `*` is the Markdown item; the `○` is the glyph OneNote drew to decorate
+    // it. Read in Obsidian that is a bullet followed by a stray circle glued to
+    // the first word - "OHere we block BYOD" - which is what a real page of the
+    // "Redmo" notebook exported as. The glyph is `aria-hidden="true"` in the page:
+    // it is decoration for a structure that is already in the markup, so it goes.
+    //
+    // It is only decoration while the list element around it can rebuild it, and
+    // that is the whole condition:
+    //
+    //   - inside an `li`, otherwise the glyph is the only structure the text has;
+    //   - in a `ul`, whose Markdown form is `*` whatever the glyph says - so a
+    //     bullet glyph is a duplicate, and `1.` is the *only* trace of the
+    //     numbering, and dropping it would silently flatten a numbered list into
+    //     indistinguishable bullets. That case keeps its marker, with the space
+    //     the DOM never had (the glyph and the text are adjacent spans), so it
+    //     exports as `* 1. First` - ugly, and strictly better than losing the
+    //     numbers.
+    //   - in an `ol`, which Turndown renders with its own numbers, so the marker
+    //     duplicates those too and goes.
+    //
+    // Ordinals only: a bare `o` is how Word styles a third-level bullet, and
+    // `▪`/`■`/`•`/`○` are not ordinals by any reading.
+    const isOneNoteListMarker = (node) => typeof node.className === 'string' &&
+        node.className.split(/\s+/).some(
+            (cls) => cls === 'ListMarker' || cls === 'ListMarkerWrappingSpan');
+
+    const isOrdinalMarker = (text) =>
+        /^(?:\d{1,3}|[a-zA-Z]|[ivxlcdmIVXLCDM]{1,6})[.)]$/.test(text.trim());
+
+    /**
+     * What to do with one marker: 'drop', 'keep' (it is the only trace of a
+     * number), or null (not a list marker at all, leave it to the other rules).
+     *
+     * Decided in one place because Turndown calls `filter` and `replacement`
+     * separately, and two copies of this test is two chances for them to disagree
+     * about which markers exist.
+     */
+    const listMarkerDecision = (node) => {
+        const item = typeof node.closest === 'function' ? node.closest('li') : null;
+        if (!item) return null;
+
+        const list = item.parentElement;
+        if (list && list.nodeName === 'OL') return 'drop';
+
+        return isOrdinalMarker(node.textContent || '') ? 'keep' : 'drop';
+    };
+
+    td.addRule('listMarkers', {
+        filter: (node) => isOneNoteListMarker(node) && listMarkerDecision(node) !== null,
+        replacement: (content, node) => (
+            listMarkerDecision(node) === 'keep'
+                ? `${(node.textContent || '').trim()} `
+                : ''
+        )
+    });
+
     // Rule to handle images with our custom data-local-src attribute (Obsidian style)
     td.addRule('localImages', {
         filter: (node) => node.nodeName === 'IMG' && node.getAttribute('data-local-src'),
