@@ -19,6 +19,7 @@ program
     .option('--output-dir <path>', 'Output directory for exported Markdown files (default: ./output)')
     .option('--notheadless', 'Run in visible browser mode for debugging')
     .option('--dodump', 'Dump HTML content to files for debugging')
+    .option('--screenshot', 'With --dodump, save a PNG screenshot beside each HTML dump (implies --dodump)')
     .option('--nopassasked', 'Skip password-protected sections instead of asking')
     .option('--non-interactive', 'Run unattended (containers/CI): requires --notebook or --notebook-link, and implies --nopassasked')
     .option('-v, --verbose', 'Show debug output (debug logging is off by default)')
@@ -35,6 +36,17 @@ program
         // Map --output-dir to exportDir used internally
         if (options.outputDir) {
             options.exportDir = options.outputDir;
+        }
+
+        // --screenshot only means something next to an HTML dump: the PNG is named
+        // after the dump it belongs to, and written in the same directory. Asking
+        // for one without the other is nearly always a typo, but turning dumps on
+        // and saying so is more useful than refusing to run - the alternative
+        // leaves the user with no screenshots and an error telling them to add a
+        // flag they did not know they needed.
+        if (options.screenshot && !options.dodump) {
+            logger.warn('--screenshot was given without --dodump; turning HTML dumps on too, since the screenshots are named after them.');
+            options.dodump = true;
         }
 
         // Fail fast, before any browser is launched, when the caller asked for

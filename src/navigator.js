@@ -1,8 +1,7 @@
 const logger = require('./utils/logger');
 const { getAuthenticatedContextWithFile, logBrowserLocale } = require('./auth-context');
 const { ONENOTE_URL } = require('./config');
-const fs = require('fs-extra');
-const path = require('path');
+const { writeDebugDump } = require('./utils/dumps');
 
 /**
  * Detects the Microsoft Defender / MCAS "Use Edge Browser" interstitial
@@ -124,11 +123,9 @@ async function listNotebooks(options = {}) {
         }
 
         if (options.dodump) {
-            const dumpDir = await logger.getDumpDir();
             const displayPath = logger.getDumpDisplayPath();
             logger.warn(`Dumping main page content to ${displayPath}/debug_page_dump.html...`);
-            const content = await page.content();
-            await fs.writeFile(path.join(dumpDir, 'debug_page_dump.html'), content);
+            await writeDebugDump(page, 'debug_page_dump', options);
         }
 
         let notebooks = [];
@@ -349,11 +346,9 @@ async function openNotebookByLink(options = {}) {
         await page.waitForTimeout(10000);
 
         if (options.dodump) {
-            const dumpDir = await logger.getDumpDir();
             const displayPath = logger.getDumpDisplayPath();
             logger.warn(`Dumping page content to ${displayPath}/debug_notebook_link.html...`);
-            const content = await page.content();
-            await fs.writeFile(path.join(dumpDir, 'debug_notebook_link.html'), content);
+            await writeDebugDump(page, 'debug_notebook_link', options);
         }
 
         // Try to extract the notebook name from the page title or URL

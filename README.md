@@ -88,6 +88,7 @@ node src/index.js export \
 | `--output-dir <path>` | Output directory for exported files (default: `./output`) |
 | `--notheadless` | Run in visible browser mode (useful for debugging / password-protected sections) |
 | `--dodump` | Dump raw HTML content to `logs/dumps/` for debugging |
+| `--screenshot` | With `--dodump`, save a PNG of the screen beside each HTML dump. Implies `--dodump` |
 | `--nopassasked` | Skip password-protected sections instead of pausing to ask |
 | `--non-interactive` | Run unattended (containers/CI). Requires `--notebook` or `--notebook-link`, and implies `--nopassasked` |
 | `-v, --verbose` | Show debug output (off by default) |
@@ -178,6 +179,7 @@ microsoft-onenote-export-notebook/
 │   └── utils/
 │       ├── logger.js         # Levelled logging + file logger
 │       ├── logPaths.js       # Where logs live (checkout vs global install)
+│       ├── dumps.js          # --dodump HTML dumps, plus --screenshot PNGs beside them
 │       ├── fetchHosts.js     # Classification of asset fetch hosts
 │       ├── naming.js         # File/dir name sanitising and de-duplication
 │       └── retry.js          # Exponential backoff, with permanent-failure support
@@ -209,6 +211,30 @@ wiped on reinstall. Override either with `ONENOTE_EXPORT_LOG_DIR`.
 Logs and `--dodump` HTML dumps are created owner-only (`0600`/`0700`): a dump
 contains the authenticated DOM of a real notebook, including cookies and tenant
 hostnames. Treat `logs/dumps/` as sensitive and do not commit it.
+
+### Screenshots alongside dumps
+
+```bash
+node src/index.js export --auth-file auth.json --notebook "X" \
+  --dodump --screenshot
+```
+
+Every HTML dump gets a PNG of the same screen next to it, named after the file it
+belongs to — `debug_page_Notes.html` and `debug_page_Notes.png` sit side by side
+in `logs/dumps/<timestamp>/`. `--screenshot` implies `--dodump`, because there is
+nothing to name a screenshot after without one.
+
+Two things worth knowing before you rely on it:
+
+- the notebook lives in an iframe, and Playwright cannot screenshot a frame on
+  its own, so the PNG is the **whole tab** as it was on screen — section list and
+  canvas together, not just the note;
+- it is a viewport capture, not a full-page one. OneNote's canvas is virtual and
+  can be tens of thousands of pixels tall, so the image is what was visible when
+  the dump was taken.
+
+A screenshot that fails (tab closed, frame detached) is logged as a warning and
+the export continues — the HTML dump is still written.
 
 ### Verbosity
 

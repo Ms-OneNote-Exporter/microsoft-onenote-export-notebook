@@ -5,6 +5,7 @@ const { getSections, getPages, selectSection, selectPage, getPageContent, naviga
 const { createMarkdownConverter } = require('./parser');
 const { resolveInternalLinks } = require('./linkResolver');
 const { withRetry, permanent } = require('./utils/retry');
+const { writeDebugDump } = require('./utils/dumps');
 const { classifyFetchTarget } = require('./utils/fetchHosts');
 const { createNotebookSession, NotebookUnavailableError } = require('./notebookFrame');
 const readline = require('readline');
@@ -601,11 +602,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                     );
                 }
 
-                if (options.dodump) {
-                    const dumpDir = await logger.getDumpDir();
-                    const dumpPath = path.join(dumpDir, `debug_group_${safeName(item.name, 'group')}.html`);
-                    await fs.writeFile(dumpPath, await contentFrame.content());
-                }
+                await writeDebugDump(contentFrame, `debug_group_${safeName(item.name, 'group')}`, options);
                 await processSections(contentFrame, groupDir, td, options, pageIdMap, processedItems, item.id, stats);
                 logger.info(`Returning from group: ${item.name}`);
 
@@ -799,11 +796,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                     );
                 }
 
-                if (options.dodump) {
-                    const dumpDir = await logger.getDumpDir();
-                    const pageDumpPath = path.join(dumpDir, `debug_page_${safeName(pageInfo.name, 'page')}.html`);
-                    await fs.writeFile(pageDumpPath, await contentFrame.content());
-                }
+                await writeDebugDump(contentFrame, `debug_page_${safeName(pageInfo.name, 'page')}`, options);
 
                 const content = await getPageContent(contentFrame);
 
@@ -1061,11 +1054,13 @@ async function findContentFrame(rootPage, options = {}) {
             logger.success(`Found content frame (navigation): ${f.url()}`);
 
             if (options.dodump) {
-                const dumpDir = await logger.getDumpDir();
                 const displayPath = logger.getDumpDisplayPath();
                 logger.warn(`Dumping content frame HTML to ${displayPath}/debug_notebook_content.html...`);
-                await fs.writeFile(path.join(dumpDir, 'debug_notebook_content.html'), await f.content());
             }
+            // Written outside the `if` because writeDebugDump makes its own
+            // decision from options - including --screenshot, which only means
+            // anything alongside a dump.
+            await writeDebugDump(f, 'debug_notebook_content', options);
             return f;
         } catch (e) {
             // A frame can be cross-origin or already detached, in which case
