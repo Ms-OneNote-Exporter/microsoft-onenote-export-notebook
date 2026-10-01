@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--screenshot`: a PNG beside every `--dodump` HTML file.**
+  `--dodump` captures the DOM, which tells you *what* OneNote rendered but not
+  what it looked like — so a broken canvas, a mislaid ribbon or a dialog that
+  covered the note left nothing in the dump that a bug report could show. This
+  saves what the screen actually showed at the moment of each dump:
+
+  ```
+  logs/dumps/2026-09-30_14h22/
+  ├── debug_page_Notes.html
+  ├── debug_page_Notes.png
+  ├── debug_group_Sub-team.html
+  └── debug_group_Sub-team.png
+  ```
+
+  The PNG is named after the HTML it belongs to, so the two sort together in a
+  directory listing. `--screenshot` implies `--dodump` (there is nothing to name a
+  screenshot after otherwise) and says so rather than failing.
+
+  The notebook is an iframe and Playwright has no `screenshot()` on a frame, so
+  frame dumps are captured through the page that owns them — the whole tab, which
+  is also the more useful image. It is a viewport capture, not a full-page one:
+  OneNote's canvas is virtual and can be tens of thousands of pixels tall.
+
+  All dump writes now go through `src/utils/dumps.js`, which is owner-only
+  (`0600`) like the rest of the diagnostics. A screenshot that fails is a warning,
+  not a failure: it tends to fail when something has already gone wrong, and a
+  debugging aid must not be the thing that loses the export.
+
 ## [0.3.7] - 2026-10-01
 
 A **patch**. The CLI contract, the exit codes and the output of a correct export
