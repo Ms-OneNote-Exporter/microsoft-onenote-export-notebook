@@ -33,10 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Node 24, not the 20 this repository's CI tests on. Trusted publishing
-      # requires Node >= 22.14.0 and npm >= 11.5.1, and npm 10 (what Node 20
-      # ships) has no OIDC support at all - the publish would fail with an
-      # authentication error that looks nothing like a version problem.
+      # Node 24, which is now also what this repository's CI tests on. Trusted
+      # publishing requires Node >= 22.14.0 and npm >= 11.5.1, and npm 10 (what
+      # Node 20 ships) has no OIDC support at all - the publish would fail with
+      # an authentication error that looks nothing like a version problem. The
+      # floor was previously higher than CI's, so the publish ran on a Node the
+      # suite never saw.
       # Provenance is still generated either way, since npm attaches it to every
       # trusted publish.
       - uses: actions/setup-node@v6

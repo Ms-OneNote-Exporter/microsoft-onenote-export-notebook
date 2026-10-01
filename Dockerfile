@@ -1,9 +1,11 @@
 # Reproducible image built from the local working tree.
 #
-# Node 20 LTS, pinned to a patch release rather than the floating `node:20-slim`,
-# so two builds of the same commit produce the same base. Node 20 is also what CI
-# runs (.github/workflows/ci.yml), so the container and the test suite agree.
-FROM node:20.18.0-bookworm-slim
+# Node 24 LTS, pinned to a patch release rather than the floating `node:24-slim`,
+# so two builds of the same commit produce the same base. Node 24 is also what CI
+# runs (.github/workflows/ci.yml), so the container and the test suite agree - and
+# it is what the other two repos in this set already used for both, so a checkout
+# of any of the three behaves the same.
+FROM node:24.21.0-bookworm-slim
 
 # ca-certificates for TLS.
 #

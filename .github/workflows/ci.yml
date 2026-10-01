@@ -20,7 +20,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 24, matching the Dockerfile and the other two repos in this set.
+          # Was 20, which had drifted away from npm-publish.yml (already 24) and
+          # from webauth and list-notebooks (already 24) - so this repo alone
+          # tested on one Node and shipped on another.
+          node-version: 24
           cache: npm
 
       # `npm ci`, not `npm install`: it installs exactly the lockfile and fails

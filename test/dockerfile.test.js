@@ -60,7 +60,9 @@ describe('Dockerfile', () => {
     it('pins the base image to a patch release', () => {
         const from = instructions().find((l) => l.startsWith('FROM '));
         expect(from).toBeDefined();
-        // node:20-slim floats; a patch tag does not.
+        // A floating tag like `node:24-slim` floats; a patch tag does not. The
+        // pattern is deliberately version-agnostic so a Node bump does not have
+        // to touch this test.
         expect(from).toMatch(/^FROM node:\d+\.\d+\.\d+-\w+-slim$/);
     });
 

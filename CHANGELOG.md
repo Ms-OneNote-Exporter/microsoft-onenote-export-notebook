@@ -6,6 +6,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-01
+
+A **patch**. The CLI contract, the exit codes and the output of a correct export
+are all unchanged; what changes is how the package is *consumed* and which Node
+it runs on. The one thing that could surprise an existing consumer is the loss of
+deep imports, called out below.
+
+### Added
+
+- **An `exports` map, so this package can be imported rather than only shelled
+  out to.** `main` pointed at `src/index.js`, a commander CLI that calls
+  `program.parse()` at require time — so `require('@msout/microsoft-onenote-export-notebook')`
+  in order to reach `runExport` printed a usage banner and parsed a command line.
+  The package root now resolves to `src/exporter.js`; `./cli` is the old
+  behaviour, and `bin` is unaffected because bin resolution does not go through
+  `exports`. This is what lets `ms-onenote-exporter`, the umbrella package built
+  on top of this one, drive all three steps from a single CLI.
+
+### Changed
+
+- **Node 20 → Node 24**, in the Dockerfile and in CI. This package was the last
+  in its set still on 20 for those two while its own publish workflow, and both
+  sibling packages, were already on 24. Two consequences: the suite tested a Node
+  the artifact never ran on, and trusted publishing needed a higher floor
+  (`npm >= 11.5.1`, for OIDC) than CI's Node provided — a publish that would have
+  failed with an authentication error bearing no resemblance to a version
+  problem. The image stays pinned to an exact patch (`node:24.21.0-bookworm-slim`)
+  so two builds of the same commit produce the same base, and CI moves with the
+  image so the two continue to agree.
+- **The playwright floor is now `^1.63.0`** (was `^1.58.1`). Each of the three
+  packages carried its own lockfile and resolved playwright independently, so
+  they wanted different chromium revisions and a machine with all three
+  checkouts downloaded several browser builds into the shared Playwright cache.
+  They now all resolve to the same one.
+
+### Breaking
+
+- **Deep imports no longer resolve.** `require('@msout/microsoft-onenote-export-notebook/src/exporter.js')`
+  now fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`; the root and `./cli` are the
+  supported entries. This is a side effect of adding `exports`, and it is the
+  point: the old deep path is what let a consumer reach a module the package had
+  never promised to keep stable. Nothing in this repository depended on it.
+
 ## [0.3.6] - 2026-09-29
 
 A **patch**. It changes the output of a correct export — that is the whole of it —
