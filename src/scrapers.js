@@ -256,18 +256,64 @@ async function getPageContent(frame) {
         // OneNote stores content in "Outlines"
         const outlines = Array.from(canvas.querySelectorAll('.OutlineContainer'));
 
-        // Sort outlines by their visual position (top, then left)
-        // This prevents content flipping when DOM order doesn't match visual layout
-        outlines.sort((a, b) => {
-            const rectA = a.getBoundingClientRect();
-            const rectB = b.getBoundingClientRect();
+        // F-69: an attachment is not always inside one.
+        //
+        // This function builds the note body by cloning the outlines into a
+        // detached div, and then searches *that clone* for attachments - so
+        // anything outside every outline was invisible by construction. OneNote
+        // draws such an attachment as an absolutely positioned element that is a
+        // sibling of the outlines, under the same `#PageContentContainer`:
+        //
+        //     div#PageContentContainer
+        //       div.OutlineContainer            <- the text
+        //       div.WACEFContainer[style*=absolute]   <- the file, no outline above it
+        //       div.OutlineContainer            <- more text
+        //
+        // The real page that shape came from exported its PDF as nothing at all:
+        // `Saved (0 assets)`, no file in assets/, no warning - because "found no
+        // attachment" and "never looked where it was" look identical from outside.
+        //
+        // Restricted to `.WACEFContainer` on purpose. Widening this to "anything
+        // outside an outline" pulls in the page furniture that also lives there -
+        // the column wrapper and two resizers, all measured on the same page.
+        const floatingAttachments = outlines.length === 0
+            // With no outlines at all, the fallback further down clones the whole
+            // region, which already contains whatever is there. Injecting the
+            // attachments as well would count one file twice - and the second copy
+            // is the one turndown would see, so the note would carry an embed to an
+            // id the downloader never assigned.
+            ? []
+            : Array.from(canvas.querySelectorAll('.WACEFContainer'))
+                .filter(el => !outlines.some(o => o.contains(el)));
 
-            // Use a small vertical threshold (10px) to treat items roughly on the same line
-            if (Math.abs(rectA.top - rectB.top) > 10) {
-                return rectA.top - rectB.top;
+        /**
+         * Visual order: top, then left, with a 10px band treated as one line.
+         *
+         * Defined once because it is now used for two populations of content, and
+         * two copies of an ordering rule is how a note ends up with its attachment
+         * in a different place from the paragraph that introduces it.
+         */
+        const visualOrder = (a, b) => {
+            if (Math.abs(a.top - b.top) > 10) {
+                return a.top - b.top;
             }
-            return rectA.left - rectB.left;
-        });
+            return a.left - b.left;
+        };
+
+        // Sort content by visual position, so DOM order that does not match the
+        // visual layout cannot flip the note.
+        //
+        // Outlines and floating attachments go through this in ONE pass on purpose:
+        // the attachment is then placed by the same rule as everything around it,
+        // which is what puts it where the author put it - on the page this came
+        // from, between the paragraphs reading "PDF attached below" and "PDF
+        // attached above".
+        const blocks = [
+            ...outlines.map(el => ({ el, isFloatingAttachment: false })),
+            ...floatingAttachments.map(el => ({ el, isFloatingAttachment: true }))
+        ]
+            .map(b => ({ ...b, rect: b.el.getBoundingClientRect() }))
+            .sort((a, b) => visualOrder(a.rect, b.rect));
 
         let title = '';
         let dateTime = '';
@@ -275,7 +321,17 @@ async function getPageContent(frame) {
         // Prepare a clone for cleanup to avoid affecting the UI
         const contentDiv = document.createElement('div');
 
-        outlines.forEach(outline => {
+        blocks.forEach(({ el, isFloatingAttachment }) => {
+            // A floating attachment is content, not chrome: cloned whole, with none
+            // of the outline handling below, which is about page metadata and about
+            // dragging handles. Its own subtree carries the file name in three
+            // places, which is what detection and labelling need.
+            if (isFloatingAttachment) {
+                contentDiv.appendChild(el.cloneNode(true));
+                return;
+            }
+
+            const outline = el;
             const clone = outline.cloneNode(true);
 
             // Handle Title and DateTime specifically

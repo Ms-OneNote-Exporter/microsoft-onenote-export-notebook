@@ -377,6 +377,93 @@ describe('scrapers against captured fixtures', () => {
         });
     });
 
+    describe('an attachment OneNote drew outside every outline (F-69)', () => {
+        /**
+         * The one shape that made getPageContent structurally unable to see a file.
+         *
+         * The note body is built by cloning the `.OutlineContainer` elements into a
+         * detached div, and attachments are then searched for *inside that clone*.
+         * OneNote sometimes draws an attachment as an absolutely positioned
+         * element that is a **sibling** of the outlines rather than a child of one,
+         * so it is never cloned - and the export reported:
+         *
+         *     Saved (0 assets)
+         *
+         * with no warning at all. Not a failed download, which is counted and
+         * listed in the note; simply nothing found, and therefore nothing said. On
+         * the notebook this came from, one attached PDF was missing from the vault
+         * on every run while the note kept the text "PDF attached below".
+         *
+         * The assertions are on the *markdown*, because that is where the defect
+         * was invisible: the summary's counts were all correct.
+         */
+        const { createMarkdownConverter } = require('../src/parser');
+
+        let content;
+        let markdown;
+        let marked;
+
+        beforeAll(async () => {
+            await loadFixture('attachment-outside-outline.html');
+            content = await getPageContent(page);
+            markdown = createMarkdownConverter().turndown(content.contentHtml);
+            marked = await page.evaluate(() => {
+                const out = {};
+                // The live elements, which is where the click markers are stamped.
+                document.querySelectorAll('[data-one-attach-id]').forEach((el) => {
+                    out[el.getAttribute('data-one-attach-id')] = (el.className || '').toString();
+                });
+                return out;
+            });
+        });
+
+        itBrowser('scrapes the floating attachment at all', async () => {
+            expect(content.attachments).toHaveLength(1);
+            expect(content.attachments[0].originalName)
+                .toBe('Affiche_Rappel_Melon_Charentais-2436220.pdf');
+        });
+
+        itBrowser('gives it a click marker, so it is not unfetchable forever', async () => {
+            // The F-60 lesson applied to a new shape: an attachment with no marker
+            // on a live element can never be downloaded, whatever the summary says.
+            expect(Object.keys(marked)).toEqual(content.attachments.map((a) => a.id));
+        });
+
+        itBrowser('renders an embed for it in the note', async () => {
+            expect(markdown).toContain('[[assets/file_0.pdf]]');
+        });
+
+        itBrowser('puts it between the two paragraphs that say where it belongs', async () => {
+            // The author wrote "PDF attached below" above it and "PDF attached
+            // above" below it, so reading order is not a guess here - it is the
+            // note's own instruction. Appending at the end would produce a note
+            // that contradicts itself.
+            const below = markdown.indexOf('PDF attached below');
+            const embed = markdown.indexOf('[[assets/file_0.pdf]]');
+            const above = markdown.indexOf('PDF attached above');
+            expect(below).toBeGreaterThan(-1);
+            expect(embed).toBeGreaterThan(below);
+            expect(above).toBeGreaterThan(embed);
+        });
+
+        itBrowser('leaves the title and the timestamp out of the body', async () => {
+            // The floating attachment must not come through as a second title or a
+            // second date: it is joined to the same ordered pass the outlines go
+            // through, and those two are still handled as page metadata.
+            expect(content.title).toBe('attachment_PDF');
+            expect(content.dateTime).toBe('Saturday, October 03, 2026 3:26 PM');
+            expect(markdown).not.toContain('attachment_PDF');
+        });
+
+        itBrowser('keeps every paragraph of the page', async () => {
+            // A guard on the ordering work itself: sorting the body must not drop
+            // or duplicate an outline to make room for the attachment.
+            expect(markdown).toContain('We added file :');
+            expect((markdown.match(/PDF attached below/g) || [])).toHaveLength(1);
+            expect((markdown.match(/PDF attached above/g) || [])).toHaveLength(1);
+        });
+    });
+
     describe('fixtures are safe to commit', () => {
         // The de-identification is the whole point of committing these. If a future
         // capture is pasted in without being scrubbed, this should catch it.
