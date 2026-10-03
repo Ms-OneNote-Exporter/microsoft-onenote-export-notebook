@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<!--
+  Fixture: an attachment OneNote drew *outside* every outline, as captured in
+  logs/dumps/2026-10-03_21h39/debug_page_attachment_PDF.html and de-identified like
+  the other fixtures.
+
+  This is the F-69 shape. In the other attachment fixture the container is nested:
+
+      div.PageContentContainer
+        div.OutlineContainer          <- the outline
+          div.Outline
+            div.OutlineContent
+              div.WACEFContainer     <- the attachment, inside the outline
+
+  Here it is a *sibling* of the outlines instead, and absolutely positioned:
+
+      div.PageContentContainer
+        div.OutlineContainer        ...   ...
+        div.OutlineContainer
+        div.WACEFContainer          <- position: absolute, no outline above it
+        div.OutlineContainer        ...   ...
+
+  getPageContent builds the note body by cloning the .OutlineContainer elements
+  into a detached div and then looks for attachments *inside that clone*. An
+  attachment outside every outline is therefore never cloned and never seen: the
+  real page exported as
+
+      We added file : "….pdf" as attachment
+      PDF attached below
+                                <- nothing here
+      PDF attached above
+
+  with no file in assets/, `Saved (0 assets)`, and no warning at all - because
+  "found no attachment" and "never looked where it was" look the same from outside.
+
+  The geometry is the real page's, so the reading order this fixture asserts is the
+  order the author wrote in the note: "below" above the file, "above" below it.
+
+  Everything is inert and offline: the icon is a data: URL rather than the object
+  URL the real UI uses, for the same reason as the other attachment fixture - and
+  the scraper keys on title/aria-label, not on the image source.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>attachment outside an outline fixture</title>
+<style>
+  /*
+    Real dimensions and positions. getPageContent orders the body by
+    getBoundingClientRect, and the F-69 assertions are about that order, so the
+    coordinates here are the point of the fixture rather than decoration.
+  */
+  body { margin: 0; }
+  #OreoCanvas { display: block; width: 800px; height: 600px; position: relative; }
+  #PageContentContainer { position: relative; display: block; width: 800px; height: 600px; }
+
+  .OutlineContainer { position: absolute; width: 600px; left: 474px; }
+  .Outline { background: transparent; }
+
+  .oc-title    { top: 67px; }
+  .oc-datetime { top: 110px; }
+  .oc-below    { top: 149px; }
+  .oc-statement{ top: 162px; }
+  .oc-above    { top: 342px; }
+
+  .WACEFContainer { display: block; position: absolute; left: 468px; top: 255px; width: 320px; }
+  .WACEFOverlay { display: block; width: 320px; height: 24px; }
+  .WACEFImage { width: 16px; height: 16px; }
+  .WACEFFilename { display: block; width: 300px; height: 20px; }
+</style>
+</head>
+<body>
+
+  <div id="OreoCanvas" class="canvasContainer">
+    <!-- The shared parent. In the real dump both the outlines and the attachment
+         are children of this element, which is why the attachment is reachable at
+         all - it is only its lack of an .OutlineContainer ancestor that hides it. -->
+    <div id="PageContentContainer" class="PageContentContainer">
+
+      <div class="OutlineContainer oc-title">
+        <div class="TitleOutline">attachment_PDF</div>
+      </div>
+
+      <div class="OutlineContainer oc-datetime">
+        <div class="TitleDateTimeOutline">Saturday, October 03, 2026 3:26 PM</div>
+      </div>
+
+      <div class="OutlineContainer oc-below">
+        <div class="Outline"><div class="OutlineContent">
+          <p class="Paragraph">PDF attached below</p>
+        </div></div>
+      </div>
+
+      <div class="OutlineContainer oc-statement">
+        <div class="Outline"><div class="OutlineContent">
+          <p class="Paragraph">We added file : "Affiche_Rappel_Melon_Charentais-2436220.pdf" as attachment</p>
+        </div></div>
+      </div>
+
+      <!--
+        THE F-69 CASE: same container markup as every other attachment, but a
+        sibling of the outlines rather than a child of one. It must be scraped,
+        deduplicated to one attachment like any other, given a click marker, and
+        rendered in reading order - between the two paragraphs that say where it
+        belongs.
+      -->
+      <div class="WACEFContainer" role="link" aria-label="Affiche_Rappel_Melon_Charentais-2436220.pdf" tabindex="0">
+        <span class="WACEFOverlay" title="Affiche_Rappel_Melon_Charentais-2436220.pdf"></span>
+        <img class="WACEFImage" role="presentation" alt="Affiche_Rappel_Melon_Charentais-2436220.pdf"
+             title="Affiche_Rappel_Melon_Charentais-2436220.pdf"
+             src="data:image/gif;base64,R0lGOD">
+        <div class="WACEFFilename" role="presentation" title="Affiche_Rappel_Melon_Charentais-2436220.pdf">Affiche_Rappel_Melon_Charentais-2436220</div>
+      </div>
+
+      <div class="OutlineContainer oc-above">
+        <div class="Outline"><div class="OutlineContent">
+          <p class="Paragraph">PDF attached above</p>
+        </div></div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
