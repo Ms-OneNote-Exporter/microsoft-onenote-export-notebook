@@ -777,10 +777,13 @@ that real tests exist.
 
 ## 7. Findings register
 
-**64 findings: 1 Critical, 14 High, 22 Medium, 27 Low/Info.** Full evidence for each
+**65 findings: 1 Critical, 14 High, 22 Medium, 28 Low/Info.** Full evidence for each
 is in the Phase 2 section above; this table is the index. Four more (F-55, F-56, F-57,
 F-58) came out of a real run and are written up in Phase 2d, which also records the
-diagnosis I got wrong first, and F-60 through F-65 came out of a second one.
+diagnosis I got wrong first, and F-60 through F-65 came out of a second one. F-66 came
+out of a third — a real run of the then-unreleased `--screenshot` flag, reported by the
+person running it, which is the first finding here that a user's own run found rather
+than this review.
 
 **Every Critical and High is fixed. Every Medium is fixed or fixed with a stated
 and argued limit** — see the standing table in §8a. What remains open is the
@@ -840,6 +843,7 @@ Low/Info tail and the untriaged items in §6.
 | F-56 | **High** | `index.js:61` | A closed target makes Playwright reject an internal promise; Node killed the export with an unhandled rejection before the CLI's own handler ran | **fixed** — `parseAsync()` + an `unhandledRejection` handler; browser now closes, exit code is `1` |
 | F-57 | Medium | `exporter.js:647` | The `.sectionList` wait reported every failure as "Timeout", including an instantly-failing dead target | **fixed** — only a `TimeoutError` is called a timeout; anything else names its cause |
 | F-58 | **High** | `exporter.js:767,845` | `return exportContent(…)` inside `try { … } finally { browser.close() }` — the `finally` ran immediately, so the export closed its own browser before the first DOM call. Regression from `2807715` | **fixed** — `return await` in both paths, with the reason, an eslint-disable, and an ordering test |
+| **F-66** | Low | `utils/dumps.js:98`, `notebookFrame.js:460` | **Fixed.** `--screenshot` wrote 30 HTML dumps and **2** PNGs on a real run. `ownerPageOf()` decided what it had been handed with `typeof target.screenshot === 'function'`, and every page and group dump is handed a `NotebookSession` — whose proxy answers **any** property name with a function, because it forwards unknown members to the live frame. The session was therefore classified as "already a Page", `screenshot()` was routed to the Frame behind it (which has none), `_call` returned `undefined` for the method it could not find, and `fs.writeFile` threw about a `data` argument — one warning per page, none of which said what was wrong. The two PNGs that did appear belonged to the two dumps whose targets were a real `Page` and a real `Frame`, which is exactly the pair the check could tell apart | **fixed** — ask `page()` first, which the session answers for real and a `Page` does not have at all, so the check cannot misfire; and `screenshotOf()` now requires image bytes back, so a future mis-resolution says what could not be screenshotted instead of blaming the disk. Live, same notebook: **30 dumps / 2 PNGs → 29 dumps / 29 PNGs**, 0 warnings (29 is the same run minus one repeat of a page name). **Low** because nothing about an export was wrong — no data lost, no wrong Markdown, and the flag is unreleased; what was lost is the debugging aid, on the runs where it is wanted. **What the tests missed:** they all passed a real `Page` or a real `Frame`, and both work perfectly — the exporter passes neither of those for a page dump |
 
 Severity scale: **Critical** = silent data loss / false success / security ·
 **High** = wrong output or hangs · **Medium** = maintainability, perf, portability ·
