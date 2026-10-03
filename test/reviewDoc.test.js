@@ -123,6 +123,73 @@ describe('the findings register', () => {
     });
 });
 
+describe('the register renders as one table', () => {
+    /**
+     * The §7 register table, from its header to the severity scale beneath it.
+     *
+     * Scoped to §7 on purpose. §8a holds several *separate* tables, each with its
+     * own header row, and a paragraph break between two of them is correct - so a
+     * whole-file "no blank lines in tables" rule would be wrong.
+     */
+    const register = (() => {
+        const start = lines.findIndex((l) => l.startsWith('| ID | Sev | Area'));
+        const end = lines.findIndex((l, i) => i > start && l.startsWith('Severity scale'));
+        expect(start).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        return { start, end, lines: lines.slice(start, end) };
+    })();
+
+    /**
+     * Line numbers of blank lines that are followed by another row of this table.
+     *
+     * That is the whole failure: a blank line ends a table in GitHub-flavored
+     * Markdown, so everything after it renders as literal pipe-text. A blank line
+     * before the severity scale is fine and is not reported.
+     */
+    const breaksInRegister = (() => {
+        const breaks = [];
+        let pendingBlank = null;
+        register.lines.forEach((line, i) => {
+            if (line.trim() === '') {
+                pendingBlank = i + 1;
+                return;
+            }
+            if (pendingBlank !== null && line.startsWith('|')) breaks.push(pendingBlank);
+            pendingBlank = null;
+        });
+        return breaks;
+    })();
+
+    it('has no blank line between its rows', () => {
+        // One stray newline between the F-64 and F-65 rows, introduced 2026-09-28 in
+        // c7a1677, split the register into two tables on GitHub: F-65 onwards
+        // rendered as raw text, and so did every finding added after it. It went
+        // unnoticed for a week with all nine tests in this file green, because they
+        // count rows with a regex and cannot see how those rows render - the
+        // document's arithmetic was checked and its rendering was not.
+        expect(breaksInRegister).toEqual([]);
+    });
+
+    it('holds nothing but its header, its rows and one trailing blank', () => {
+        // So the break cannot be "fixed" by deleting the offending region instead of
+        // the newline: any content that is not a row is a failure here.
+        const content = register.lines.filter((l) => l.trim() !== '');
+
+        expect(content[0]).toBe('| ID | Sev | Area | One-line summary | Status |');
+        expect(content[1]).toBe('|----|-----|------|------------------|--------|');
+        expect(content.slice(2).every((l) => /^\|\s*\*{0,2}F-\d+/.test(l))).toBe(true);
+        // header + separator + 54 rows. Bundled rows (F-03..F-11) still count as one.
+        expect(content).toHaveLength(56);
+    });
+
+    it('ends the table with one blank line before the severity scale', () => {
+        // Asserted because it is the one blank that is legitimate, and a future fix
+        // that "tidies all the blank lines" would remove it and merge the table
+        // into the severity-scale paragraph.
+        expect(register.lines[register.lines.length - 1].trim()).toBe('');
+    });
+});
+
 describe('the standing table agrees with the register', () => {
     /**
      * The §8a standing section, from the "State" table through the "Still open"
