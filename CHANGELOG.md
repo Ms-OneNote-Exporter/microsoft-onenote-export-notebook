@@ -36,6 +36,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not a failure: it tends to fail when something has already gone wrong, and a
   debugging aid must not be the thing that loses the export.
 
+### Changed
+
+- **A version tag now creates the GitHub Release as well as the npm publication.**
+  Tagging has always been the release, but only half of it was automated: seven
+  tags reached the registry between v0.2.1 and v0.3.7 and this repository had no
+  Release at all, so the Releases panel listed nothing while `npm install`
+  resolved 0.3.7. Publishing and releasing are two objects and only the first was
+  ever written down.
+
+  The notes are the tag message, which is already written by hand for each
+  release, so there is nothing to keep in sync. `scripts/release-notes.js` reads it
+  and strips the `commit <sha>` trailer git appends; the workflow then creates the
+  Release, last, so a failed build cannot leave one advertising a version the
+  registry does not have.
+
+  Two things this does not fix, stated rather than left to be discovered:
+
+  - `v0.2.1` is a *lightweight* tag, so its message is a merge commit subject, and
+    `v0.3.7`'s is the single line `chore(release): 0.3.7`. Their Releases get
+    those notes. The five tags from `v0.2.2` to `v0.3.6` carry the written
+    changelog, and so will the next one. The script warns when a tag is
+    lightweight, so the next tag cannot repeat that by accident.
+  - The seven existing tags had no Release and still do not;
+    `.github/workflows/release-backfill.yml` creates the missing ones by hand
+    (Actions → Backfill GitHub Releases) and refuses to release a tag whose version
+    is not on npm.
+
 ## [0.3.7] - 2026-10-01
 
 A **patch**. The CLI contract, the exit codes and the output of a correct export

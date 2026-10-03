@@ -1,0 +1,103 @@
+name: Backfill GitHub Releases
+
+# One-off repair for the Releases panel. npm-publish.yml creates the Release for
+# every tag it publishes, but it was added after the fact: seven tags (v0.2.1 ..
+# v0.3.7) reached npm while this repository had no Release at all, and the panel
+# still lists nothing. This workflow creates the ones that are missing and leaves
+# the rest alone.
+#
+# It is a separate workflow rather than a mode of npm-publish.yml so that it
+# cannot publish to npm under any circumstances: a repair tool that also holds
+# the `npm publish` step is a repair tool that can re-run a publish. Nothing here
+# writes to the registry.
+#
+# Once the panel matches the registry this file has nothing left to do and can be
+# deleted.
+on:
+  workflow_dispatch:
+
+permissions:
+  # Only what creating a Release needs. No id-token: this job publishes nothing.
+  contents: write
+
+# Two dispatches must not race each other into creating the same Release twice.
+concurrency:
+  group: release-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Same reason as npm-publish.yml: the notes come out of the tag objects,
+          # and a depth-1 fetch does not reliably carry them.
+          fetch-depth: 0
+
+      - name: Create a Release for every tag that has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+
+          package_name="$(node -p "require('./package.json').name")"
+          notes="${RUNNER_TEMP}/release-notes.md"
+
+          # One registry read for the whole run rather than one per tag, and it is
+          # what distinguishes "this version never shipped" from "npm is
+          # unreachable". A per-tag lookup cannot tell those apart, so a registry
+          # outage would skip every tag and this run would report itself a
+          # successful repair having done nothing.
+          if ! published="$(npm view "$package_name" versions --json 2>/dev/null)"; then
+            echo "::error::Could not read the published versions of $package_name - no Release touched."
+            exit 1
+          fi
+          echo "Published versions: $(echo "$published" | tr -d '[]", ' | tr '\n' ' ')"
+
+          # sort -V so the log reads oldest to newest, and so "Latest" is created
+          # from the highest version rather than whichever tag sorted last by name.
+          total=0
+          created=0
+          present=0
+          unpublished=0
+          for tag in $(git tag --list 'v*' | sort -V); do
+            total=$((total + 1))
+
+            if gh release view "$tag" > /dev/null 2>&1; then
+              echo "::notice::$tag already has a Release, leaving it untouched"
+              present=$((present + 1))
+              continue
+            fi
+
+            # The point of the panel is that it tracks the registry, so a tag whose
+            # version never reached npm does not get a Release: that is the exact
+            # disagreement this workflow exists to repair, and re-creating it would
+            # be the defect wearing a repair's clothes.
+            version="${tag#v}"
+            if ! printf '%s' "$published" | grep -q "\"$version\""; then
+              echo "::warning::$tag names version $version, which is not on npm - not releasing it"
+              unpublished=$((unpublished + 1))
+              continue
+            fi
+
+            node scripts/release-notes.js "$tag" > "$notes"
+            # --verify-tag re-checks the tag against the remote, so a Release cannot
+            # be created for a ref that is not really there. Without it
+            # `gh release create` creates the tag as a side effect, which is a new
+            # push to a repository nobody asked to push to.
+            gh release create "$tag" \
+              --verify-tag \
+              --title "$tag" \
+              --notes-file "$notes"
+            echo "Created Release $tag"
+            created=$((created + 1))
+          done
+
+          echo "tags=$total created=$created already-present=$present not-on-npm=$unpublished"
+          if [ "$total" -eq 0 ]; then
+            echo "::error::No v* tags were found. A depth-0 checkout should have fetched them;"
+            echo "::error::check the fetch-depth on the checkout step before trusting this run."
+            exit 1
+          fi
+        shell: bash

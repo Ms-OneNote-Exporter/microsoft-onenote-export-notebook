@@ -4,6 +4,13 @@ name: Publish Package
 # release: a branch push can never publish, and a tag whose name disagrees with
 # package.json is refused below rather than published under a misleading version.
 #
+# The GitHub Release for the tag is created here as well, and last. Publishing
+# and releasing are two different objects and only the first was automated: seven
+# tags reached npm between v0.2.1 and v0.3.7 while this repository had no Release
+# at all, so the Releases panel - the one place a reader can go to find out what
+# shipped - listed nothing. Nothing has to remember to make the Release now; the
+# tag is the event, and the event is this workflow.
+#
 # This mirrors ../microsoft-webauth's npm-publish.yml, with three differences
 # that this repository needs and that are marked in place.
 on:
@@ -25,13 +32,22 @@ concurrency:
 
 permissions:
   id-token: write # Required for OIDC trusted publishing
-  contents: read
+  # write, not read: the Release step at the end of this job creates a Release,
+  # which is a contents write. Left at read, that step fails on a permissions
+  # error and the outcome is worse than before - tags with no Releases behind
+  # them *and* a red run explaining why.
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The Release step reads its notes out of the tag object, which the
+          # default depth-1 fetch does not reliably carry. Fetching everything is
+          # cheap here: this job is already paying for a Chromium download.
+          fetch-depth: 0
 
       # Node 24, which is now also what this repository's CI tests on. Trusted
       # publishing requires Node >= 22.14.0 and npm >= 11.5.1, and npm 10 (what
@@ -96,6 +112,7 @@ jobs:
               /^test\//,
               /^fixtures\//,
               /^\.github\//,
+              /^scripts\//,           # release tooling, used by this workflow only
               /\.pem$/i,
               /\.p12$/i
             ];
@@ -114,3 +131,36 @@ jobs:
       # packages to restricted. --provenance is automatic for a trusted publish;
       # it is stated so the guarantee is visible in this file.
       - run: npm publish --access public --provenance
+
+      # Last, deliberately: a failed build must not leave a Release behind
+      # advertising a version that never reached the registry. It is ordered the
+      # same way as the tag/version check above, which also refuses before
+      # anything is published.
+      #
+      # GITHUB_TOKEN is enough and needs no secret. The cost is that a Release
+      # created this way will not itself trigger workflows on the `release`
+      # event, and this repository has none.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A re-run of this workflow must not fail on the Release it made the
+          # first time round, and re-runs are exactly when someone is already
+          # debugging something else. Checked before the notes are read, so a
+          # re-run cannot fail on reading a tag it has no use for.
+          if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists, leaving it untouched"
+            exit 0
+          fi
+          NOTES="${RUNNER_TEMP}/release-notes.md"
+          # The tag message is already the notes: it is written by hand for every
+          # release here, so there is nothing to keep in sync. The script also
+          # strips the `commit <sha>` trailer git appends to it, and warns if the
+          # tag turns out to be lightweight - in which case the message is a
+          # commit subject rather than a changelog, which is worth saying out
+          # loud rather than publishing silently.
+          node scripts/release-notes.js "${GITHUB_REF_NAME}" > "$NOTES"
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file "$NOTES"
+        shell: bash
