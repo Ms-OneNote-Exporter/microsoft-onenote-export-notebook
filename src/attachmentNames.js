@@ -33,6 +33,23 @@
  *
  * `doc`/`docx`, `xls`/`xlsx` and `ppt`/`pptx` are both included rather than only
  * the modern ones - OneNote accepts either and a note from 2007 has the old one.
+ *
+ * **Audio and video were missing entirely** (F-70), which is the exact failure
+ * this paragraph warns about. It did not stop the files being downloaded - an
+ * attachment *chip* is recognised by its `WACEF*` class names whatever its
+ * extension - so the damage was quieter and further down: the name had to pass
+ * this list to be believed, so an `.mp4` and an `.mp3` were both written as
+ * `assets/attached_file.bin`, and the note linked to that placeholder instead of
+ * to the name OneNote was showing on the same line:
+ *
+ *     We added file : "Alerte-au-gogole_480p.mp4" as attachment
+ *     [[assets/attached_file.bin]]
+ *
+ * One extension list therefore decides three separate things - whether something
+ * counts as a file, what it is called, and what the note links to - and a gap in
+ * it shows up in all three at once. Adding a type here also makes a plain
+ * hyperlink to a file of that type count as an attachment rather than stay a
+ * link, which is the direction this list is supposed to err in.
  */
 const FILE_EXTENSIONS = [
     'doc', 'docx',
@@ -42,6 +59,11 @@ const FILE_EXTENSIONS = [
     'zip', 'rar', '7z',
     'json', 'xml', 'log',
     'png', 'jpg', 'jpeg', 'gif', 'svg',
+    // Audio. WebM is also a video container, and is listed with both because
+    // OneNote accepts it in either role.
+    'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'wma', 'aiff', 'amr',
+    // Video.
+    'mp4', 'm4v', 'mov', 'avi', 'wmv', 'mkv', 'webm', 'flv', '3gp', 'mpeg', 'mpg',
 ];
 
 /**

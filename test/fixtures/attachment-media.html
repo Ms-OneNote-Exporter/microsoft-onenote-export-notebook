@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<!--
+  Fixture: audio and video attachments, as captured in
+  logs/dumps/2026-10-03_23h19/debug_page_attachment_Videos mp4.html and
+  de-identified like the other fixtures.
+
+  This is the F-70 shape, and it is a *naming* failure rather than a detection one.
+  The chip was recognised and the file downloaded every time - OneNote's WACEF*
+  class names are what identify it, not its extension - but the name had to pass
+  the extension allowlist to be believed, and audio and video were not on it. So
+  both files were written from the fallback name:
+
+      assets/attached_file.bin        <- an MP4
+      assets/attached_file_1.bin      <- an MP3
+
+  and the notes linked to those placeholders, while the page's own text said:
+
+      file attached name: Alerte-au-gogole_480p.mp4
+
+  The filenames here are genericised from that capture; the extension is the point,
+  not the words. Two chips of two different media types, so the test can also catch
+  a list that learned .mp4 and still forgot .mp3 - which is how this happened once.
+
+  Offline and inert: the icons are data: URLs rather than the object URLs the real
+  UI uses, because that scheme is a real one and a committed fixture must not
+  contain it.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>media attachment fixture</title>
+<style>
+  /* Real dimensions: the image test uses offsetWidth/offsetHeight. */
+  #OreoCanvas { display: block; width: 800px; }
+  .WACEFContainer { display: block; width: 320px; }
+  .WACEFOverlay { display: block; width: 320px; height: 24px; }
+  .WACEFImage { width: 16px; height: 16px; }
+  .WACEFFilename { display: block; width: 300px; height: 20px; }
+</style>
+</head>
+<body>
+
+  <div id="OreoCanvas" class="canvasContainer">
+
+    <div class="OutlineContainer">
+      <div class="TitleOutline">Media Attachments</div>
+    </div>
+
+    <div class="OutlineContainer">
+      <div class="Outline"><div class="OutlineContent">
+        <p class="Paragraph">Video download works, file attached name: Sample_Video_480p.mp4</p>
+        <div class="WACEFContainer" role="link" aria-label="Sample_Video_480p.mp4" tabindex="0">
+          <span class="WACEFOverlay" title="Sample_Video_480p.mp4"></span>
+          <img class="WACEFImage" role="presentation" alt="Sample_Video_480p.mp4" title="Sample_Video_480p.mp4"
+               src="data:image/gif;base64,R0lGOD">
+          <div class="WACEFFilename" role="presentation" title="Sample_Video_480p.mp4">Sample_Video_480p</div>
+        </div>
+      </div></div>
+    </div>
+
+    <div class="OutlineContainer">
+      <div class="Outline"><div class="OutlineContent">
+        <p class="Paragraph">A mp3 file named on disk: Sample_Audio_2min.mp3</p>
+        <div class="WACEFContainer" role="link" aria-label="Sample_Audio_2min.mp3" tabindex="0">
+          <span class="WACEFOverlay" title="Sample_Audio_2min.mp3"></span>
+          <img class="WACEFImage" role="presentation" alt="Sample_Audio_2min.mp3" title="Sample_Audio_2min.mp3"
+               src="data:image/gif;base64,R0lGOD">
+          <div class="WACEFFilename" role="presentation" title="Sample_Audio_2min.mp3">Sample_Audio_2min</div>
+        </div>
+      </div></div>
+    </div>
+
+  </div>
+</body>
+</html>
