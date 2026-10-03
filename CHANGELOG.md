@@ -63,6 +63,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (Actions → Backfill GitHub Releases) and refuses to release a tag whose version
     is not on npm.
 
+### Fixed
+
+- **An attachment OneNote drew outside every outline was never exported at all.**
+  `getPageContent()` built the note body by cloning the `.OutlineContainer` elements
+  and then searched *that clone* for attachments, so anything outside an outline
+  could not be found by construction. OneNote sometimes draws an attachment as an
+  absolutely positioned element that is a sibling of the outlines. The file was
+  never downloaded, never linked, and never reported — no warning at all, because
+  "found no attachment" and "never looked where it was" look the same from outside.
+  On the notebook this was found on, an attached PDF was missing from every export
+  while the note still read `PDF attached below`:
+
+  ```
+  We added file : "….pdf" as attachment
+  PDF attached below
+                                        <- the file was here in OneNote
+  PDF attached above
+  ```
+
+  Those attachments now join the same visual-order pass as the outlines, so the
+  file is placed where the author put it rather than at the end of the note. Only
+  file containers qualify: the same page also has a column wrapper and two resizers
+  outside its outlines, and those are page furniture.
+
+- **Audio and video attachments lost their names.** `.mp4`, `.mp3` and their
+  neighbours were missing from the extension allowlist entirely, so every one of
+  them was written from the fallback name:
+
+  ```
+  assets/attached_file.bin      <- an MP4
+  assets/attached_file_1.bin    <- an MP3
+  ```
+
+  and the note linked to those placeholders, on a page whose own text read
+  `file attached name: Alerte-au-gogole_480p.mp4`. Nothing warned, because the
+  download had succeeded — the files were in the vault and the links resolved, but
+  the vault disagreed with the notebook about what they were called, and the second
+  file existed only as `_1`.
+
+  The files were still *found* throughout, because a OneNote file chip is identified
+  by its `WACEF*` class names rather than by its extension; it is the name that has
+  to pass that list to be believed. One list decides three things — whether
+  something counts as a file, what it is called, and what the note links to — so a
+  gap in it showed up in all three at once.
+
+  **Worth knowing before you re-run:** a plain hyperlink to a file of a newly
+  recognised type now counts as an attachment and is downloaded, where it used to be
+  left as a link. That is the direction the list is meant to err in — a missing
+  extension means an attachment is silently not downloaded — but it is a change in
+  behaviour, not only in naming. Files already in your vault keep their names;
+  `output/` is overwritten rather than renamed in place.
+
 ## [0.3.7] - 2026-10-01
 
 A **patch**. The CLI contract, the exit codes and the output of a correct export
