@@ -85,26 +85,54 @@ async function writeDebugDump(target, baseName, options = {}, log = defaultLogge
 /**
  * The page that owns `target`, which is what can actually take a screenshot.
  *
- * A Playwright Frame has `page()`; a Page does not. `NotebookSession` (the
- * exporter's frame proxy, src/notebookFrame.js) also answers `page()`, and
- * resolves it to the live frame's owner rather than to a stale reference, which
- * is what makes this work after OneNote replaces its frame mid-run.
+ * A Playwright Frame has `page()` and no `screenshot()`; a Page is the other way
+ * round. `NotebookSession` (the exporter's frame proxy, src/notebookFrame.js)
+ * answers `page()` too, and resolves it to the live frame's owner rather than to
+ * a stale reference, which is what makes this work after OneNote replaces its
+ * frame mid-run.
+ *
+ * `page()` is therefore asked FIRST, and that order is the fix rather than a
+ * style preference. The session's proxy forwards *any* property it does not
+ * implement as a method call (see notebookFrame.js), so asking a session for
+ * `screenshot` returns a function - the frame behind it has no screenshot of its
+ * own to call. Sniffing for `screenshot` first therefore reported the session as
+ * "already a page", and the capture then went through the session's forwarding to
+ * a method that does not exist on a Frame and resolved to `undefined`.
+ *
+ * That failure was silent and total. Every `--dodump` site in processSections
+ * passes the session rather than a Frame (src/exporter.js), so every page and
+ * group dump wrote its HTML and then failed its PNG with an
+ * `fs.writeFile(path, undefined)` TypeError swallowed into a per-page warning. A
+ * real run on 2026-10-03 (`--dodump --screenshot`) produced 30 HTML dumps and 2
+ * PNGs - the two whose targets were a real Page and a real Frame, which is exactly
+ * the pair this function can tell apart. Only `page()` survives the proxy: a Page
+ * has no `page()` method at all, so asking costs nothing and cannot misfire.
  *
  * @param {object} target
  * @returns {import('playwright').Page|null}
  */
 function ownerPageOf(target) {
     if (!target) return null;
-    if (typeof target.screenshot === 'function') return target;
+
+    // Frame-shaped, and the exporter's session with it.
     if (typeof target.page === 'function') {
+        let owner = null;
         try {
-            return target.page() || null;
+            owner = target.page();
         } catch (e) {
             // Asking a dead frame for its page throws; the caller turns this into
             // a warning, which is the honest outcome.
             return null;
         }
+        // A Frame that names no page is detached, and a session with no page has
+        // nothing to capture either. Falling through to the checks below would
+        // only re-classify the session as a Page it is not.
+        return owner || null;
     }
+
+    // No page(): it can only be a Page, which can screenshot itself.
+    if (typeof target.screenshot === 'function') return target;
+
     return null;
 }
 
@@ -124,7 +152,49 @@ async function screenshotOf(target) {
     if (!page) {
         throw new Error('no page is available to screenshot (the frame may have been detached)');
     }
-    return page.screenshot({ fullPage: false, timeout: SCREENSHOT_TIMEOUT_MS });
+
+    if (typeof page.screenshot !== 'function') {
+        // The resolution above can still land on something that cannot capture
+        // itself. Name it, rather than letting `page.screenshot is not a function`
+        // stand as the whole explanation.
+        throw new Error(
+            `${describeTarget(page)} has no screenshot() of its own - only a page can be ` +
+            'captured, so a frame has to be captured through the page that owns it'
+        );
+    }
+
+    const image = await page.screenshot({ fullPage: false, timeout: SCREENSHOT_TIMEOUT_MS });
+
+    // A successful capture is image bytes. Anything else means the object asked was
+    // not really a page that can screenshot itself - and the proxy is exactly that
+    // trap, answering "yes" to a screenshot() feature check it cannot honour. Saying
+    // so here names the cause, where letting it through turned every failure into an
+    // `fs.writeFile` TypeError about a "data" argument, which says nothing about the
+    // notebook and nothing about the code.
+    if (!Buffer.isBuffer(image) || image.length === 0) {
+        throw new Error(
+            `the capture returned ${image === undefined ? 'no image data' : 'an unusable result'} ` +
+            `instead of image data, so ${describeTarget(page)} cannot be screenshotted`
+        );
+    }
+
+    return image;
+}
+
+/**
+ * What `target` is, for an error message.
+ *
+ * Names the class, so the warning can be traced to the code that handed in the
+ * wrong kind of object: `NotebookSession` in a screenshot message *is* the whole
+ * diagnosis. A plain object says nothing, so it is not dressed up as a name.
+ *
+ * @param {object} target
+ * @returns {string}
+ */
+function describeTarget(target) {
+    const name = target && target.constructor && target.constructor.name;
+    const generic = !name || name === 'Object' || name === 'Function';
+    return generic ? 'the target' : `the ${name}`;
 }
 
 /**

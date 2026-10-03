@@ -457,6 +457,17 @@ function createNotebookSession(params = {}) {
 
             // Everything else is awaited by its caller, so the retrying path is
             // safe and worth having.
+            //
+            // Note what this makes the session answer to a *feature* check: any
+            // property name at all comes back as a function, including names a
+            // Frame does not have (`screenshot`, for one - only a Page can take
+            // one). Code that decides "is this a Page?" by asking whether
+            // `target.screenshot` is a function is therefore told yes about a
+            // frame-backed session, calls it, gets `undefined` back from a method
+            // that does not exist (see _call), and has to explain that later. Ask
+            // the session for `page()` instead - it is answered for real, and a
+            // Playwright Page has no `page()` method, so the check cannot misfire.
+            // src/utils/dumps.js (ownerPageOf) is the case that got this wrong.
             return (...args) => target._call(prop, args);
         }
     });

@@ -5,17 +5,26 @@ const path = require('path');
 /**
  * `--screenshot`: a PNG beside every `--dodump` HTML file.
  *
- * The claim is "each HTML dump has a screenshot next to it", and there are three
+ * The claim is "each HTML dump has a screenshot next to it", and there are four
  * ways that claim can be false without anything looking wrong:
  *
  *  - the screenshot is silently skipped (the flag never reached the writer);
  *  - it is written under a name that does not match its HTML, so a bug report
  *    naming the HTML cannot be paired with the image;
+ *  - it is skipped because the writer was handed something that cannot be
+ *    captured, and the reason is only visible in a per-page warning;
  *  - a failed screenshot takes the export down with it, which is the opposite of
  *    what a debugging aid should do - especially since it tends to fail exactly
  *    when something has already gone wrong (the tab closed, the frame detached).
  *
- * The third one is why the failure paths are pinned here rather than left to
+ * The third one is how this feature shipped broken: the exporter dumps pages and
+ * groups through a NotebookSession, whose proxy answers *every* property with a
+ * function, so the writer's `typeof target.screenshot === 'function'` check took
+ * the session for a Page and every capture resolved to undefined. All 30 HTML
+ * dumps were written; 2 PNGs were. The tests below pass the session for real,
+ * because a mocked Page and a real Frame both work perfectly well and hid it.
+ *
+ * The last one is why the failure paths are pinned here rather than left to
  * inspection: a screenshot that throws inside processSections would be caught by
  * the surrounding `catch` and reported as "Failed to process group", turning a
  * diagnostic into a data-loss bug.
@@ -32,6 +41,7 @@ jest.mock('../src/utils/logger', () => ({
 
 const logger = require('../src/utils/logger');
 const { writeDebugDump, ownerPageOf } = require('../src/utils/dumps');
+const { createNotebookSession } = require('../src/notebookFrame');
 const { chromium } = require('playwright');
 
 let dumpDir;
@@ -47,6 +57,12 @@ function useTempDumpDir() {
 function fakeTarget(html = '<html>one</html>') {
     return { content: jest.fn(async () => html) };
 }
+
+/**
+ * A logger for the notebook session. Its only use here is to swallow the recovery
+ * chatter a session logs when it re-attaches to a frame.
+ */
+const silentLog = () => ({ debug: () => {} });
 
 describe('writeDebugDump', () => {
     beforeEach(() => {
@@ -196,6 +212,95 @@ describe('ownerPageOf', () => {
         expect(ownerPageOf(null)).toBeNull();
         expect(ownerPageOf({})).toBeNull();
     });
+
+    it('resolves a NotebookSession to the page that owns its frame', () => {
+        // The exporter hands writeDebugDump the session, not a Frame, for every
+        // page and group dump. The session's proxy answers `screenshot` with a
+        // function even though a Frame cannot take one (notebookFrame.js), so a
+        // screenshot() feature check calls the session a Page and the capture then
+        // resolves to undefined - 28 of 30 PNGs missing on a real run. Only
+        // page() is answered for real.
+        const page = { screenshot: jest.fn(async () => Buffer.from('PNG')) };
+        const frame = {
+            content: jest.fn(async () => '<html/>'),
+            page: () => page,
+            isDetached: () => false,
+            isClosed: () => false,
+        };
+        const session = createNotebookSession({ page, frame, log: silentLog() });
+
+        expect(ownerPageOf(session)).toBe(page);
+        // Pins the trap itself, so this cannot regress into passing by accident.
+        expect(typeof session.screenshot).toBe('function');
+        expect(typeof frame.screenshot).toBe('undefined');
+    });
+
+    it('treats a session whose frame is gone as having no page, not as a Page', () => {
+        // Falling through to the screenshot() check after page() yields nothing
+        // would re-classify the session as a Page and send the capture down the
+        // path that resolves to undefined.
+        const session = createNotebookSession({
+            page: null,
+            frame: { isDetached: () => true, isClosed: () => false, page: () => null },
+            log: silentLog(),
+        });
+
+        expect(ownerPageOf(session)).toBeNull();
+    });
+
+    it('answers null for a Frame that no longer has a page', () => {
+        expect(ownerPageOf({ page: () => null })).toBeNull();
+    });
+});
+
+describe('a capture that produced no image', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        useTempDumpDir();
+    });
+
+    afterEach(() => {
+        if (dumpDir) fs.removeSync(dumpDir);
+    });
+
+    it('says which object could not be screenshotted, instead of blaming the disk', async () => {
+        // What a missing PNG used to report: `fs.writeFile` complaining about a
+        // "data" argument, which says nothing about the notebook or the code.
+        const page = { content: jest.fn(async () => '<html/>'), screenshot: jest.fn(async () => undefined) };
+
+        const written = await writeDebugDump(page, 'debug_page_X', { dodump: true, screenshot: true });
+
+        expect(written.screenshot).toBeNull();
+        const warning = logger.warn.mock.calls.map((c) => String(c[0])).join('\n');
+        expect(warning).toContain('Could not screenshot debug_page_X');
+        expect(warning).toContain('the capture returned no image data');
+        expect(warning).not.toContain('data" argument must be of type');
+    });
+
+    it('says what cannot be screenshotted, rather than leaving a JavaScript error', async () => {
+        // `page.screenshot is not a function` says nothing about the notebook. The
+        // session is the only thing the exporter hands this writer that answers
+        // screenshot() and cannot take one, so the message has to be enough to tell
+        // the reader where to look.
+        const frame = { content: jest.fn(async () => '<html/>') };
+        const session = createNotebookSession({ page: {}, frame, log: silentLog() });
+
+        const written = await writeDebugDump(session, 'debug_page_X', { dodump: true, screenshot: true });
+
+        expect(written.screenshot).toBeNull();
+        const warning = logger.warn.mock.calls.map((c) => String(c[0])).join('\n');
+        expect(warning).toContain('has no screenshot() of its own');
+        expect(warning).not.toContain('is not a function');
+    });
+
+    it('refuses an empty image rather than writing a 0-byte PNG', async () => {
+        const page = { content: jest.fn(async () => '<html/>'), screenshot: jest.fn(async () => Buffer.alloc(0)) };
+
+        const written = await writeDebugDump(page, 'debug_page_X', { dodump: true, screenshot: true });
+
+        expect(written.screenshot).toBeNull();
+        expect(fs.readdirSync(dumpDir)).toEqual(['debug_page_X.html']);
+    });
 });
 
 describe('writeDebugDump against real Chromium', () => {
@@ -243,6 +348,32 @@ describe('writeDebugDump against real Chromium', () => {
         const png = fs.readFileSync(written.screenshot);
         expect(png.slice(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
         expect(png.length).toBeGreaterThan(100);
+
+        await context.close();
+    });
+
+    itBrowser('writes a real PNG when the target is the session the exporter passes', async () => {
+        // The case that was broken in production: src/exporter.js dumps pages and
+        // groups through a NotebookSession, and the session's proxy answers any
+        // property with a function, so the writer took it for a Page and captured
+        // nothing. Every page and group dump lost its PNG this way; only the two
+        // dumps given a real Page or a real Frame got one. The image must come out
+        // of the owning page, since a Frame cannot be captured on its own.
+        const context = await browser.newContext();
+        const page = await context.newPage();
+        await page.setContent('<iframe id="notebook" srcdoc="<p id=target>the notebook</p>" style="width:400px;height:200px"></iframe>');
+        const frame = await (await page.$('#notebook')).contentFrame();
+        const session = createNotebookSession({ page, frame, log: silentLog() });
+
+        const written = await writeDebugDump(session, 'debug_page_Some notes', { dodump: true, screenshot: true });
+
+        expect(written.screenshot).toBe(path.join(dumpDir, 'debug_page_Some notes.png'));
+        const png = fs.readFileSync(written.screenshot);
+        expect(png.slice(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+        expect(png.length).toBeGreaterThan(100);
+        expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('Could not screenshot'));
+        // The HTML dump still has to come from the frame, not the page.
+        expect(fs.readFileSync(written.html, 'utf8')).toContain('the notebook');
 
         await context.close();
     });
