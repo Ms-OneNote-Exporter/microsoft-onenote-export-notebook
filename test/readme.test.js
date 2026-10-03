@@ -55,9 +55,22 @@ describe('README project structure', () => {
         // that only exists in .github/ is exactly the sort of thing a reader
         // needs to be told about.
         '.github/workflows/npm-publish.yml',
+        // As is the workflow that repairs the Releases panel, since a maintainer
+        // looking for how releases are made should find both halves of the answer.
+        '.github/workflows/release-backfill.yml',
     ])('describes %s', (file) => {
         expect(fs.existsSync(path.join(ROOT, file))).toBe(true);
         expect(listed(file)).toBe(true);
+    });
+
+    it('describes the release-notes script the publish workflow calls', () => {
+        // Not decoration: npm-publish.yml runs `node scripts/release-notes.js`, so
+        // a tree that omits it documents a repository whose release step names a
+        // file nobody can find.
+        expect(fs.existsSync(path.join(ROOT, 'scripts', 'release-notes.js'))).toBe(true);
+        expect(readme).toContain('release-notes.js');
+        expect(fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'npm-publish.yml'), 'utf8'))
+            .toContain('node scripts/release-notes.js');
     });
 
     it('does not claim a project root that does not exist', () => {

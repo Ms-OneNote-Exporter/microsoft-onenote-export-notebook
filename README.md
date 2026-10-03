@@ -184,8 +184,11 @@ microsoft-onenote-export-notebook/
 │       ├── naming.js         # File/dir name sanitising and de-duplication
 │       └── retry.js          # Exponential backoff, with permanent-failure support
 ├── test/                     # Jest suite (`npm test`)
+├── scripts/
+│   └── release-notes.js      # GitHub Release notes, read from a tag's message
 ├── .github/workflows/ci.yml           # lint + test + CLI smoke test
-├── .github/workflows/npm-publish.yml   # npm publish, on a version tag
+├── .github/workflows/npm-publish.yml   # npm publish + GitHub Release, on a version tag
+├── .github/workflows/release-backfill.yml # one-off: Releases for tags published before that
 ├── Dockerfile                # Container image (builds from this working tree)
 ├── entrypoint.sh             # Container entry point
 ├── start-container.sh        # Helper to run the container
