@@ -377,6 +377,68 @@ describe('scrapers against captured fixtures', () => {
         });
     });
 
+    describe('audio and video attachments keep their own names (F-70)', () => {
+        /**
+         * A naming failure, not a detection one, and that is what made it quiet.
+         *
+         * OneNote's file chip is recognised by its `WACEF*` class names, so these
+         * files were detected and downloaded on every run. But the *name* had to
+         * pass the extension allowlist to be believed, and audio and video were
+         * not on it, so both fell back to the placeholder name:
+         *
+         *     assets/attached_file.bin      <- an MP4
+         *     assets/attached_file_1.bin    <- an MP3
+         *
+         * and the notes linked to those. Nothing warned: the download succeeded.
+         * The page's own text said `file attached name: …mp4` on the same line.
+         *
+         * One list decides three things here - whether something counts as a file,
+         * what it is called, and what the note links to - so these assertions cover
+         * the name and the extension separately, because that is how it breaks.
+         */
+        const { createMarkdownConverter } = require('../src/parser');
+
+        let content;
+        let markdown;
+
+        beforeAll(async () => {
+            await loadFixture('attachment-media.html');
+            content = await getPageContent(page);
+            markdown = createMarkdownConverter().turndown(content.contentHtml);
+        });
+
+        itBrowser('names each attachment after the file it is', () => {
+            expect(content.attachments.map((a) => a.originalName).sort())
+                .toEqual(['Sample_Audio_2min.mp3', 'Sample_Video_480p.mp4']);
+        });
+
+        itBrowser('never falls back to the placeholder name for a known media type', () => {
+            // The specific symptom on the real notebook. `attached_file` is the
+            // value the scraper substitutes when nothing it can see looks like a
+            // filename, and its presence here means the name was thrown away while
+            // sitting in the attribute right next to it.
+            expect(content.attachments.map((a) => a.originalName))
+                .not.toContain('attached_file');
+        });
+
+        itBrowser('carries the real extension into the note', () => {
+            // The link is built from the id plus the extension taken from
+            // data-filename; the exporter then renames it to the file's real name.
+            // `.bin` in either place means the extension never made it out of here.
+            expect(markdown).toContain('[[assets/file_0.mp4]]');
+            expect(markdown).toContain('[[assets/file_1.mp3]]');
+            expect(markdown).not.toContain('.bin');
+        });
+
+        itBrowser('keeps the two files apart without a _1 suffix', () => {
+            // Both used to be called `attached_file`, so the second became
+            // `attached_file_1.bin` purely by collision - two different documents
+            // distinguished by a counter.
+            const names = content.attachments.map((a) => a.originalName);
+            expect(new Set(names).size).toBe(names.length);
+        });
+    });
+
     describe('an attachment OneNote drew outside every outline (F-69)', () => {
         /**
          * The one shape that made getPageContent structurally unable to see a file.

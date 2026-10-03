@@ -42,6 +42,38 @@ describe('the extension list', () => {
         expect(looksLikeFileName('sheet.xls', pattern)).toBe(true);
     });
 
+    it('recognises audio and video, which used to be missing entirely (F-70)', () => {
+        // The omission did not stop these files being downloaded - a chip is
+        // recognised by its WACEF* class names whatever its extension - so the
+        // damage was quieter and further down: the name had to pass this list to be
+        // believed, so an .mp4 and an .mp3 were written as `attached_file.bin` and
+        // the notes linked to that.
+        //
+        // Audio and video are asserted separately because a list that learns one
+        // family and forgets the other is exactly how this happened: .docx was
+        // added once (F-23) and audio never was.
+        const pattern = fileExtensionPattern();
+
+        for (const name of ['clip.mp3', 'voice.wav', 'memo.m4a', 'song.aac',
+            'take.flac', 'sound.ogg', 'clip.wma']) {
+            expect(looksLikeFileName(name, pattern)).toBe(true);
+        }
+        for (const name of ['clip.mp4', 'clip.mov', 'clip.avi', 'clip.mkv',
+            'clip.webm', 'clip.m4v', 'clip.wmv']) {
+            expect(looksLikeFileName(name, pattern)).toBe(true);
+        }
+    });
+
+    it('still refuses a truncated media label, now that media are on the list', () => {
+        // The strict trailing boundary earns its keep precisely when the list gets
+        // longer: OneNote truncates long labels, and "....mp" from a cut video name
+        // must not read as a filename.
+        const pattern = fileExtensionPattern();
+
+        expect(looksLikeFileName('Sample_Video_480p...mp', pattern)).toBe(false);
+        expect(looksLikeFileName('a page in my notebook', pattern)).toBe(false);
+    });
+
     it('rejects a string with no known extension', () => {
         const pattern = fileExtensionPattern();
 
