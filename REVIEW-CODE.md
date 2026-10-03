@@ -777,17 +777,18 @@ that real tests exist.
 
 ## 7. Findings register
 
-**65 findings: 1 Critical, 14 High, 22 Medium, 28 Low/Info.** Full evidence for each
+**67 findings: 1 Critical, 14 High, 23 Medium, 29 Low/Info.** Full evidence for each
 is in the Phase 2 section above; this table is the index. Four more (F-55, F-56, F-57,
 F-58) came out of a real run and are written up in Phase 2d, which also records the
 diagnosis I got wrong first, and F-60 through F-65 came out of a second one. F-66 came
 out of a third — a real run of the then-unreleased `--screenshot` flag, reported by the
 person running it, which is the first finding here that a user's own run found rather
-than this review.
+than this review. That run also produced F-67 and F-68, recorded without being fixed.
 
 **Every Critical and High is fixed. Every Medium is fixed or fixed with a stated
-and argued limit** — see the standing table in §8a. What remains open is the
-Low/Info tail and the untriaged items in §6.
+and argued limit — except F-67**, which a real run found on 2026-10-03 and which is
+open; see the standing table in §8a. What remains open is that one, the Low/Info
+tail and the untriaged items in §6.
 
 | ID | Sev | Area | One-line summary | Status |
 |----|-----|------|------------------|--------|
@@ -843,6 +844,8 @@ Low/Info tail and the untriaged items in §6.
 | F-56 | **High** | `index.js:61` | A closed target makes Playwright reject an internal promise; Node killed the export with an unhandled rejection before the CLI's own handler ran | **fixed** — `parseAsync()` + an `unhandledRejection` handler; browser now closes, exit code is `1` |
 | F-57 | Medium | `exporter.js:647` | The `.sectionList` wait reported every failure as "Timeout", including an instantly-failing dead target | **fixed** — only a `TimeoutError` is called a timeout; anything else names its cause |
 | F-58 | **High** | `exporter.js:767,845` | `return exportContent(…)` inside `try { … } finally { browser.close() }` — the `finally` ran immediately, so the export closed its own browser before the first DOM call. Regression from `2807715` | **fixed** — `return await` in both paths, with the reason, an eslint-disable, and an ordering test |
+| **F-67** | Medium | `exporter.js:216`, `:222` | **Open.** A page with an **empty** title on the canvas is refused forever, so a genuinely untitled page is never exported at all. `isRequestedPageOnScreen()` returns `true` when OneNote omits the title outline, but not when it renders one that is *empty* — which is what it does for an untitled page, showing the "tap to enter text" placeholder. `normalisePageName('') !== normalisePageName('Untitled Page')`, so the page never settles, the one retry does not help, and it is thrown away. Confirmed live twice on the same 2 pages, headed and headless (F-61's own comment predicted this: "refusing it would fail notes that used to export fine") | **open** — the check has to accept an empty title as "untitled", not as "a different page", which is a change to the wait F-61 introduced and wants its own live verification. **Medium, not High:** unlike F-62 — High because a subtree was skipped by a warning that did not affect the exit status — this loss is reported the way F-65 was built to report it: counted in the summary, named in the log, and the run exits `3`. So it is a note missing from a vault, not a note missing *silently* |
+| **F-68** | Low | `exporter.js:799`, `utils/dumps.js` | **Open.** Dumps are named after the page, so two pages with the same name write one file: `debug_page_Duplicate Title.{html,png}` was written twice on a live run and the first page's pair was overwritten. The Markdown writer already avoids this with a `_1` suffix (`usedNames`, F-52); the dump name does not, so the diagnostic for a same-named page is the *last* one and its HTML and PNG stay consistent with each other while silently standing in for a page they are not | **open** — deliberately low and deliberately not fixed: it costs one diagnostic when two notes share a title, and every fix (a counter, an id, a timestamp) makes the dump name harder to match to the page name in a bug report, which is the reason the pairing exists |
 | **F-66** | Low | `utils/dumps.js:98`, `notebookFrame.js:460` | **Fixed.** `--screenshot` wrote 30 HTML dumps and **2** PNGs on a real run. `ownerPageOf()` decided what it had been handed with `typeof target.screenshot === 'function'`, and every page and group dump is handed a `NotebookSession` — whose proxy answers **any** property name with a function, because it forwards unknown members to the live frame. The session was therefore classified as "already a Page", `screenshot()` was routed to the Frame behind it (which has none), `_call` returned `undefined` for the method it could not find, and `fs.writeFile` threw about a `data` argument — one warning per page, none of which said what was wrong. The two PNGs that did appear belonged to the two dumps whose targets were a real `Page` and a real `Frame`, which is exactly the pair the check could tell apart | **fixed** — ask `page()` first, which the session answers for real and a `Page` does not have at all, so the check cannot misfire; and `screenshotOf()` now requires image bytes back, so a future mis-resolution says what could not be screenshotted instead of blaming the disk. Live, same notebook: **30 dumps / 2 PNGs → 29 dumps / 29 PNGs**, 0 warnings (29 is the same run minus one repeat of a page name). **Low** because nothing about an export was wrong — no data lost, no wrong Markdown, and the flag is unreleased; what was lost is the debugging aid, on the runs where it is wanted. **What the tests missed:** they all passed a real `Page` or a real `Frame`, and both work perfectly — the exporter passes neither of those for a page dump |
 
 Severity scale: **Critical** = silent data loss / false success / security ·
@@ -989,15 +992,20 @@ this codebase touches those, and forcing a header does not override an account s
 register row rather than by trusting the totals above — which is how the F-35 error
 below was found.
 
+**Two rows changed since, both from the 2026-10-03 run that found F-66:** the Medium row
+is no longer "0 open" (F-67), and the Low/Info row gained F-68. Nothing else in this
+table was re-read, so treat it as the 2026-09-29 reconciliation plus those two rows. The
+counts at the top of §7 are recomputed by `test/reviewDoc.test.js` rather than by hand.
+
 | Sev | State |
 |-----|-------|
 | Critical | **0 open.** F-01 fixed, and its residual F-65 with it. |
 | High | **0 open.** All 14 fixed. F-20 was corrected down to Low when the live capture disproved its mechanism. |
-| Medium | **0 open.** All 22 fixed, or fixed with a limit that is argued rather than assumed: **F-33** (M365 takes its UI language from the account profile, and Office Online from the `lc`/`mkt` parameters SharePoint appends — nothing here overrides an account setting) and **F-23** (the DOM-bound heuristics cannot leave the browser callback without `eval` against a Microsoft login page; the fixture tests cover them in a real browser). |
+| Medium | **1 open.** 22 are fixed, or fixed with a limit that is argued rather than assumed: **F-33** (M365 takes its UI language from the account profile, and Office Online from the `lc`/`mkt` parameters SharePoint appends — nothing here overrides an account setting) and **F-23** (the DOM-bound heuristics cannot leave the browser callback without `eval` against a Microsoft login page; the fixture tests cover them in a real browser). The open one is **F-67**: an untitled page is refused by the settle check F-61 added, so it is never exported — found by a real run, not by reading code |
 
 | Sev | Still open |
 |-----|-------------|
-| Low/Info | F-18 unused `content.title` · F-19 the `className` guard asymmetry (latent, unreachable today) · F-27 image `alt` discarded · F-28 first-row-as-header assumption · F-38 residual: `dumpSubDir` still has minute granularity, and `module.exports = new Logger()` is still a require-time side effect · F-43 the `diagnose-*` scripts hand-roll `process.argv` parsing and call `process.exit` inside functions · F-49 images always written `.png`, no `content-type` check · F-54 order-dependent page-label stripping (documented, deliberately not fixed — not a live label shape) |
+| Low/Info | F-18 unused `content.title` · F-19 the `className` guard asymmetry (latent, unreachable today) · F-27 image `alt` discarded · F-28 first-row-as-header assumption · **F-68** two same-named pages share one dump name, so the first pair is overwritten · F-38 residual: `dumpSubDir` still has minute granularity, and `module.exports = new Logger()` is still a require-time side effect · F-43 the `diagnose-*` scripts hand-roll `process.argv` parsing and call `process.exit` inside functions · F-49 images always written `.png`, no `content-type` check · F-54 order-dependent page-label stripping (documented, deliberately not fixed — not a live label shape) |
 | Untriaged (§6, no ID) | `processSections`' 8 positional parameters and its mutable default `stats` · `openNotebook` leaks the listing page · the download popups leak on the error path · `linkResolver`'s case-folding vs a case-sensitive filesystem, and its second full read/write pass · 15 remaining fixed `waitForTimeout` sleeps |
 
 **Closed rather than fixed, and deliberately not counted as open.** F-21 was
