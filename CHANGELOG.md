@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A page that fails to settle now leaves its canvas behind** (with `--dodump`). The dump
+  used to be written only *after* a page settled, so the one moment the page is
+  guaranteed to be interesting — the failure — produced nothing to look at. The error
+  could report the canvas title and nothing else, while the whole page sat in the DOM
+  unrecorded. It is now written as `<page>_UNSETTLED.html`, named so it cannot overwrite
+  the normal capture. If a page ever fails to settle for a new reason, the markup needed
+  to diagnose it is already on disk.
+
 - **Image files are named after the format they actually are.** Every image used to be
   written `.png` whatever it was, so a GIF in a note became a file called
   `attachment_pic-GIF_img_1.png` holding GIF data — an extension that lies to anything

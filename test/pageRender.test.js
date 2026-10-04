@@ -516,6 +516,49 @@ describe('an unrendered page produces no file and is counted as a failure', () =
         }
     }, 60000);
 
+    itBrowser('leaves the canvas behind for the next person to look at (F-76)', async () => {
+        // The dump used to happen only *after* a page settled, so the failure path -
+        // the one moment the DOM is guaranteed to be interesting - threw straight past
+        // it and left nothing. The error text could report the canvas title and
+        // nothing else, which is how F-67 was diagnosable from one log line and F-73
+        // was not diagnosable at all.
+        const page = await browser.newPage();
+        const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'f76-'));
+        const dumpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'f76-dump-'));
+        logger.getDumpDir.mockResolvedValue(dumpDir);
+
+        try {
+            await page.goto(fixture('empty-canvas.html'), { waitUntil: 'domcontentloaded' });
+
+            await exporter.exportContent({
+                contentFrame: page.mainFrame(),
+                notebookName: 'Empty Canvas Notebook',
+                options: { exportDir: outDir, dodump: true },
+                page
+            });
+
+            // Named apart from the success-path dump, because the two must not
+            // overwrite each other: the diagnostic replacing the good capture would
+            // be a cruel version of F-68.
+            const dumped = fs.readdirSync(dumpDir);
+            expect(dumped).toContain('debug_page_The Page_UNSETTLED.html');
+
+            // And it is the real page, not a placeholder or an empty shell - the point
+            // of writing it is that someone can open it and see what was on screen.
+            // (This fixture deliberately has no canvas container at all, which is what
+            // makes the page unrenderable in the first place, so the assertion is on
+            // the page list it should contain rather than on a canvas.)
+            const html = fs.readFileSync(path.join(dumpDir, 'debug_page_The Page_UNSETTLED.html'), 'utf8');
+            expect(html).toContain('id="PageList"');
+            expect(html).toContain('The Page');
+        } finally {
+            logger.getDumpDir.mockReset();
+            await page.close().catch(() => { });
+            fs.removeSync(outDir);
+            fs.removeSync(dumpDir);
+        }
+    }, 60000);
+
     itBrowser('names the page that failed, so it can be found and re-run', async () => {
         const page = await browser.newPage();
         const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'f61b-'));
