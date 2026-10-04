@@ -229,6 +229,23 @@ function isUntitledPageName(name) {
 }
 
 /**
+ * The page a caller asked for, whether it named it or identified it.
+ *
+ * Accepts a bare name, or `{ name, id }`. A name alone is what every call site used to
+ * pass, and is what most tests still do; an id is what makes an untitled page decidable
+ * (see `isRequestedPageOnScreen`). The string form is kept rather than breaking every
+ * call site, because the two carry genuinely different amounts of information and the
+ * difference is worth seeing at the call site rather than hidden behind a default.
+ *
+ * @param {string|{name: string, id?: string|null}} expected
+ * @returns {{name: string, id: string|null}}
+ */
+function expectedPage(expected) {
+    if (typeof expected === 'string') return { name: expected, id: null };
+    return { name: expected.name, id: expected.id || null };
+}
+
+/**
  * Decides whether the canvas is settled on the page that was asked for.
  *
  * A rendered canvas is not the same as the right canvas, and neither is a
@@ -247,6 +264,10 @@ function isUntitledPageName(name) {
  * A page with no title outline at all is still a page that rendered, and refusing
  * it would fail notes that used to export fine.
  *
+ * @param {string|{name: string, id?: string|null}} expected - A page name, or a name
+ *   and the id of the row that was clicked. The id is what makes an untitled page
+ *   decidable; see the empty-title branch below.
+ *
  * This says the right page is on screen. It does not say the page is finished -
  * see canvasSignature.
  *
@@ -254,23 +275,50 @@ function isUntitledPageName(name) {
  * @param {string} expectedTitle - Name of the page that was requested
  * @returns {boolean} True when the canvas has settled on the requested page
  */
-function isRequestedPageOnScreen(state, expectedTitle) {
+function isRequestedPageOnScreen(state, expected) {
+    const { name: expectedTitle } = expectedPage(expected);
+
     if (!state || state.outlines === 0) return false;
     if (!state.titles || state.titles.length === 0) return true;
     // More than one title means a switch is still in progress, whichever page is
     // being cloned.
     if (state.titles.length > 1) return false;
 
-    // F-67: OneNote does not leave the title out for an untitled page, it leaves
-    // it *empty*. So `titles` is [''], which used to fall through to the comparison
-    // below and be measured against 'Untitled Page' - never equal, retried once,
-    // and then thrown away. The page was rendered, with a date and whatever the
-    // author put on it, and the export reported it as a failure.
+    // F-67 and F-73: OneNote does not leave the title out for an untitled page, it
+    // leaves it *empty*. So `titles` is [''], and a name cannot say which page is on
+    // screen - an author can call an untitled page anything at all.
     //
-    // Read as "untitled", and only for a request that is itself untitled: a page
-    // the author *named* "Untitled Page" has that string on its canvas, so it is
-    // still matched by name like any other titled page, and an empty title on
-    // screen cannot stand in for it.
+    // F-67's answer is a list of OneNote's untitled labels. F-73 is the page that
+    // fell through it: the same notebook holds an untitled page the author named
+    // "Another untitle page", still refused.
+    //
+    // **There is a candidate signal, and it was measured and rejected.** The page
+    // list marks the row OneNote has selected, which would identify the page by row
+    // rather than by name and so work in any language:
+    //
+    //     selected    <div class="pageListItem … mainItem__navItembackgroundSelected___BCGPF">
+    //     unselected  <div class="pageListItem … mainItem__navItembackground___li0ZX">
+    //
+    // Using it here is wrong, and the run that tried it showed why. The marker moves
+    // about 1.25s BEFORE the canvas switches - measured on the transition into
+    // "Page2", where five polls reported `selected=Page2` while the canvas was still
+    // showing "Some notes". So it confirms the click, not the render.
+    //
+    // With it in this branch, the transition *out of* the genuinely untitled page and
+    // into "Picture in" became a silent wrong write:
+    //
+    //     outlines=2 images=10/10 titles=[""] selected=Picture in verdict=match
+    //     outlines=2 images=10/10 titles=[""] selected=Picture in   <- stable, return
+    //
+    // Poll one was the untitled page still on screen; its empty title was accepted
+    // because the marker had already moved to "Picture in". The canvas had not
+    // changed, so the signature was stable, so the wait returned and "Picture in" was
+    // written with the previous page's content - no picture, and reported as a
+    // success. Live, that page had exported correctly in every previous run.
+    //
+    // So the name stays the only identity signal here, and the label list stays the
+    // price of that. `state.selectedPage` is still published, because it is what
+    // makes the timeline above visible in a --verbose log.
     if (!state.titles[0].trim()) return isUntitledPageName(expectedTitle);
 
     return normalisePageName(state.titles[0]) === normalisePageName(expectedTitle);
@@ -364,7 +412,8 @@ function describeCanvas(state) {
  * @param {number} [timeoutMs] - How long to wait before giving up
  * @returns {Promise<{outlines: number, titles: string[], images?: number, imagesReady?: number}>} The last state seen
  */
-async function waitForPageContent(contentFrame, expectedTitle, timeoutMs = 15000) {
+async function waitForPageContent(contentFrame, expected, timeoutMs = 15000) {
+    const expectedTitle = expectedPage(expected).name;
     const deadline = Date.now() + timeoutMs;
     let state = { outlines: 0, titles: [] };
     let lastSignature = null;
@@ -402,6 +451,23 @@ async function waitForPageContent(contentFrame, expectedTitle, timeoutMs = 15000
             signature === lastSignature) {
             return state;
         }
+
+        // F-73's measurement, at debug level only.
+        //
+        // The page list marks the open row independently of the canvas, which is the
+        // only candidate for identifying a page whose canvas title is empty. Whether it
+        // can be used is a question about *timing* - whether the marker moves on click
+        // or only once the canvas has caught up - and timing cannot be read off a
+        // static dump. This line is what answers it: one run produces the whole
+        // timeline, per page, and the question is settled by measurement instead of by
+        // an assumption that would decide whether a page's content can be written
+        // under the wrong name.
+        logger.debug(
+            `      [canvas] outlines=${state.outlines} images=${state.images}/${state.imagesReady} ` +
+            `titles=${JSON.stringify(state.titles)} ` +
+            `selected=${state.selectedPage ? `${state.selectedPage.name} (${state.selectedPage.id})` : 'none'}` +
+            ` verdict=${isRequestedPageOnScreen(state, expectedTitle) ? 'match' : 'no match'}`
+        );
 
         lastSignature = signature;
         await contentFrame.waitForTimeout(250);
@@ -965,7 +1031,7 @@ async function processSections(ctx) {
                 // is doubled. Both the title and the absence of a second copy have
                 // to hold.
                 logger.info(`Waiting for "${pageInfo.name}" to settle on the canvas...`);
-                let state = await waitForPageContent(frame, pageInfo.name);
+                let state = await waitForPageContent(frame, { name: pageInfo.name, id: pageInfo.id });
 
                 if (!isRequestedPageOnScreen(state, pageInfo.name)) {
                     // The first attempt can lose the race against a page OneNote
@@ -973,7 +1039,7 @@ async function processSections(ctx) {
                     // transition over, which reliably recovers that case.
                     logger.warn(`      "${pageInfo.name}" had not settled; selecting it again...`);
                     await selectPage(frame, pageInfo.id);
-                    state = await waitForPageContent(frame, pageInfo.name);
+                    state = await waitForPageContent(frame, { name: pageInfo.name, id: pageInfo.id });
                 }
 
                 if (!isRequestedPageOnScreen(state, pageInfo.name)) {

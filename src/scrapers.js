@@ -1001,11 +1001,51 @@ async function readCanvasState(frame) {
         // tells the caller the page is still filling in.
         const images = Array.from(canvas.querySelectorAll('img'));
 
+        // Which page the page list says is open. F-73's possible way out.
+        //
+        // The canvas cannot answer this: measured on the real notebook, every
+        // `{guid}` in the document belongs to the page list or the notebook, and
+        // none of them identifies the page being rendered. An untitled page's canvas
+        // carries a date and whatever the author drew, and no name at all - so the
+        // only discriminator available is the name, which is exactly what an author
+        // can set to anything they like.
+        //
+        // The page list, though, marks the open row. Three independent signals, and
+        // the first is the useful one because it is structural rather than text:
+        //
+        //   selected    <div class="pageListItem … mainItem__navItembackgroundSelected___BCGPF">
+        //   unselected  <div class="pageListItem … mainItem__navItembackground___li0ZX">
+        //
+        // The trailing hashes are build-specific and change between releases, so the
+        // readable stem is what is matched - the same approach every other class test
+        // in this file already takes. `tabindex` corroborates (0 when selected, -1
+        // when not), and the `aria-label` also says "Selected." - but that is
+        // English, so it is not used.
+        //
+        // Whether this can stand in for the title check is NOT assumed here. If the
+        // marker moves on click, before the canvas catches up, then "the page list
+        // says so" and "the canvas has switched" are two different moments and
+        // approving on the first would write the previous page's content under the
+        // new name - the silent wrong answer this whole check exists to prevent. So
+        // it is measured, not assumed; see the wait's debug line.
+        const selectedRow = document.querySelector('.pageListItem[class*="navItembackgroundSelected"]');
+        let selectedPage = null;
+        if (selectedRow) {
+            const rowItem = selectedRow.querySelector('.pageItem') || selectedRow;
+            const node = selectedRow.closest('.pageNode');
+            selectedPage = {
+                id: node ? node.id : null,
+                name: (rowItem.getAttribute('data-tip') || '').trim(),
+                tabindex: rowItem.getAttribute('tabindex')
+            };
+        }
+
         return {
             outlines: outlines.length,
             titles,
             images: images.length,
-            imagesReady: images.filter((i) => i.getAttribute('src')).length
+            imagesReady: images.filter((i) => i.getAttribute('src')).length,
+            selectedPage
         };
     });
 }

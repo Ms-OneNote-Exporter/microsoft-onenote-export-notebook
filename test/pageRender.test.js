@@ -312,6 +312,88 @@ describe('the wait replaced the sleep', () => {
         });
 
         // ---------------------------------------------------------------------
+        // F-73: the selected page-list row, measured and deliberately NOT used.
+        //
+        // OneNote marks the row it has selected, which would identify a page by row
+        // rather than by name and so work in any language:
+        //
+        //     selected    <div class="pageListItem … mainItem__navItembackgroundSelected___BCGPF">
+        //     unselected  <div class="pageListItem … mainItem__navItembackground___li0ZX">
+        //
+        // It is published on the state (`selectedPage`) so the timeline shows up in a
+        // --verbose log. It is NOT consulted by the decision, because measurement
+        // showed it moves about 1.25s before the canvas switches: five polls reported
+        // `selected=Page2` while the canvas still showed "Some notes".
+        //
+        // Using it anyway produced a silent wrong write - the transition out of an
+        // untitled page and into a titled one, where the outgoing page's empty title
+        // was accepted because the marker had already moved:
+        //
+        //     outlines=2 images=10/10 titles=[""] selected=Picture in verdict=match
+        //     outlines=2 images=10/10 titles=[""] selected=Picture in   <- stable
+        //
+        // "Picture in" was then written with the previous page's content, no picture,
+        // reported as success. Live, that page had exported correctly in every
+        // previous run.
+        //
+        // These tests pin the rejection, so the experiment cannot be repeated by
+        // someone who finds the marker and not this.
+        describe('the selected page-list row is not used to approve a page', () => {
+            const untitled = (selectedPage) => ({ outlines: 2, titles: [''], selectedPage });
+
+            it('refuses it even when the marker names exactly the requested page', () => {
+                // The state that caused the wrong write: the requested page's own row
+                // is marked selected, and the canvas is still showing the outgoing page.
+                expect(isRequestedPageOnScreen(
+                    untitled({ id: '{e7955f93-cf7c-c607-1a7b-ecd9e84f1229}{1}', name: 'Picture in' }),
+                    { name: 'Picture in', id: '{e7955f93-cf7c-c607-1a7b-ecd9e84f1229}{1}' }
+                )).toBe(false);
+            });
+
+            it('refuses it even when the request carries the row id', () => {
+                // Which is the strongest form of the marker agreeing, and still not
+                // enough: it proves the click landed, not that the canvas caught up.
+                expect(isRequestedPageOnScreen(
+                    untitled({ id: '{2367c496-400f-020d-1200-05e8150803eb}{1}', name: 'Another untitle page' }),
+                    { name: 'Another untitle page', id: '{2367c496-400f-020d-1200-05e8150803eb}{1}' }
+                )).toBe(false);
+            });
+
+            it('still accepts a genuine untitled page by its own label (F-67)', () => {
+                // The reason the label list is still there at all.
+                expect(isRequestedPageOnScreen(
+                    untitled({ id: '{x}{1}', name: 'Untitled Page' }),
+                    'Untitled Page'
+                )).toBe(true);
+            });
+
+            it('does not let the marker rescue a titled page whose title disagrees', () => {
+                expect(isRequestedPageOnScreen(
+                    { outlines: 3, titles: ['Some notes'], selectedPage: { id: '{x}{1}', name: 'Wanted Page' } },
+                    { name: 'Wanted Page', id: '{x}{1}' }
+                )).toBe(false);
+            });
+
+            it('refuses an empty canvas whether or not a marker is published', () => {
+                for (const selectedPage of [null, { id: '{x}{1}', name: 'Untitled Page' }]) {
+                    expect(isRequestedPageOnScreen(
+                        { outlines: 0, titles: [''], selectedPage },
+                        'Untitled Page'
+                    )).toBe(false);
+                }
+            });
+
+            it('still matches a titled page by name, marker or not', () => {
+                // The marker must not have changed anything for the ordinary case.
+                for (const selectedPage of [null, { id: '{x}{1}', name: 'Wanted Page' }]) {
+                    expect(isRequestedPageOnScreen(
+                        { outlines: 3, titles: ['Wanted Page'], selectedPage },
+                        'Wanted Page'
+                    )).toBe(true);
+                }
+            });
+        });
+
         // F-67: OneNote does not leave the title *out* for an untitled page, it
         // leaves it *empty*, so `titles` is ['']. That fell through to the name
         // comparison, was measured against 'Untitled Page', never matched, and the
