@@ -838,7 +838,7 @@ tail and the untriaged items in §6.
 | F-16 | Medium | `exporter.js` | Re-runs duplicated assets instead of refreshing them | **fixed by decision** — overwrite by default, with a warning naming the folder and stating what will be overwritten |
 | F-35 | Low | `downloadStrategies.js` | No per-strategy success statistics, so there was no way to tell whether the Direct strategy was earning its ~72s | **fixed** `1a5ab1b` — `utils/strategyStats.js` counts attempts and wins per strategy and the summary prints `wins/attempts`. (This was **wrongly** still listed in the "open" bundle for three releases' worth of edits; the per-strategy stats arrived with the F-32 fix.) |
 | F-18, F-19, F-27, F-28, F-43, F-49 | Low/Info | various | Remaining polish: unused `content.title`, blank-line prefix when there is no date outline, image `alt` text, table header assumption, diagnose-script arg parsing, image extension validation | open |
-| F-38 | Low | `logger.js:25-31`, `:297` | Timestamps omitted the year and timezone; `dumpSubDir` has minute granularity; the logger ran `ensureDirSync` as an import side effect | **partly fixed** — ISO date + UTC offset added. **Still open:** the dump directory is still minute-granular, so two runs in the same minute share it, and `module.exports = new Logger()` is still a require-time side effect, so merely importing any module can throw on a read-only filesystem |
+| F-38 | Low | `logger.js:25-31`, `:297` | Timestamps omitted the year and timezone; `dumpSubDir` had minute granularity; the logger ran `ensureDirSync` as an import side effect | **fixed** — ISO date + UTC offset added, and now the second half: the dump directory is second-granular (`YYYY-MM-DD_HHhMMmSS`), because two exports started inside the same minute used to share one directory and the second run's HTML and screenshots overwrote the first's file by file — the opposite of what a dump is for, since a bug report naming a dump directory got whichever run happened to be last. The import side effect is gone too: `module.exports = new Logger()` ran the constructor at require time, and the constructor resolves the log directory, creates it, chmods an existing app.log and rotates it, so merely importing one of the seven modules that want a logger could throw on a read-only or full disk before `main()` could report anything. It is now a Proxy that constructs on first *use*, with `LoggerClass` and `LEVELS` answered without constructing anything |
 | F-55 | High | `exporter.js:552,634` | One `Frame` object was pinned for the whole export, so a frame OneNote re-creates — or a tab/renderer that dies — ended the run at the next DOM call | **fixed** — `notebookFrame.js`: hold the page, resolve the frame per call, recover or report. *Found while chasing F-58; not its cause* |
 | F-56 | **High** | `index.js:61` | A closed target makes Playwright reject an internal promise; Node killed the export with an unhandled rejection before the CLI's own handler ran | **fixed** — `parseAsync()` + an `unhandledRejection` handler; browser now closes, exit code is `1` |
 | F-57 | Medium | `exporter.js:647` | The `.sectionList` wait reported every failure as "Timeout", including an instantly-failing dead target | **fixed** — only a `TimeoutError` is called a timeout; anything else names its cause |
@@ -1010,42 +1010,8 @@ counts at the top of §7 are recomputed by `test/reviewDoc.test.js` rather than 
 
 | Sev | Still open |
 |-----|-------------|
-| Low/Info | F-18 unused `content.title` · F-19 the `className` guard asymmetry (latent, unreachable today) · F-27 image `alt` discarded · F-28 first-row-as-header assumption · **F-68** two same-named pages share one dump name, so the first pair is overwritten · F-38 residual: `dumpSubDir` still has minute granularity, and `module.exports = new Logger()` is still a require-time side effect · F-43 the `diagnose-*` scripts hand-roll `process.argv` parsing and call `process.exit` inside functions · F-49 images always written `.png`, no `content-type` check · F-54 order-dependent page-label stripping (documented, deliberately not fixed — not a live label shape) |
-| Untriaged (§6, no ID) | `openNotebook` leaks the listing page · the download popups leak on the error path · `linkResolver`'s case-folding vs a case-sensitive filesystem, and its second full read/write pass · 15 remaining fixed `waitForTimeout` sleeps |
-
-**Closed rather than fixed, and deliberately not counted as open.** F-21 was
-recorded as a Medium, "fixing" it broke the exporter, and a real run disproved it —
-so it is reverted, not pending. F-20 was a High until the live capture showed the
-cross-table collision cannot occur, and was corrected down to Low with the name check
-kept as defence-in-depth. Both are the register working, not two more items of work.
-
-### Lesson worth keeping (from F-21)
-
-F-21 was a Medium finding I was confident about, and "fixing" it broke the exporter. The
-claim — "a failed back-navigation leaves the frame in the wrong tree" — was plausible and
-unverified. The same review had already established the rule it violated: *no speculation
-presented as fact*. Coding reading can tell you a return value is ignored; it cannot tell
-you the ignored value is load-bearing. One real run answered that in a minute.
-
-So: findings that assert a *runtime consequence* rather than a *code defect* need
-execution evidence before any behaviour changes. The distinguishing question is "can I
-demonstrate this input, and what happens?" — for F-21 the honest answer was "I don't know
-what happens", and the fix should have been a log line, not a throw.
-
-### Next session, in priority order
-
-**Everything on the previous list is done.** It is replaced rather than deleted,
-because "what this review still owes" is the only useful version of this section,
-and the previous list scheduled F-44/F-45/F-46, F-36/F-37, F-32, F-23 and F-40/F-48 —
-all shipped.
-
-1. **`processSections` — 8 positional parameters and a mutable default `stats`.** The
-   only untriaged item that touches the export hot path, and the last structural one.
-   The recursive call passes `outputDir, td, options, pageIdMap, processedItems,
-   parentId, stats` in a row where two of them are the same shape. A single `ctx`
-   object would make the recursion legible; the `stats` default in particular is a
-   shared-mutable-state trap that a test would have to be careful not to depend on.
-2. **F-38 residual — `logger.js:297`.** `module.exports = new Logger()` runs
+| Low/Info | F-18 unused `content.title` · F-19 the `className` guard asymmetry (latent, unreachable today) · F-27 image `alt` discarded · F-28 first-row-as-header assumption · **F-68** two same-named pages share one dump name, so the first pair is overwritten · F-43 the `diagnose-*` scripts hand-roll `process.argv` parsing and call `process.exit` inside functions · F-49 images always written `.png`, no `content-type` check · F-54 order-dependent page-label stripping (documented, deliberately not fixed — not a live label shape) |
+| Untriaged (§6, no ID) | `openNotebook` leaks the listing page · the download popups leak on the error path · `linkResolver`'s case-folding vs a case-sensitive filesystem, and its second full read/write pass ger()` runs
    `ensureDirSync` at require time, so merely importing any module can throw on a
    read-only filesystem. One line of laziness, and the only remaining import-side-effect
    in the codebase. `dumpSubDir`'s minute granularity is cosmetic next to it.

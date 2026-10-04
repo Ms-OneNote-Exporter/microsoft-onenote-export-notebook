@@ -18,16 +18,23 @@ class Logger {
         // stdout and in the log file. It is now off unless asked for.
         this.level = Logger._initialLevel();
 
-        // Initialize dump directory name once per execution
+        // Initialize dump directory name once per execution.
+        //
+        // Second granularity, not minute: two exports started inside the same
+        // minute used to share one dump directory, so the second run's HTML and
+        // screenshots overwrote the first's file by file. A bug report that says
+        // "look in logs/dumps/<timestamp>" then points at whichever run happened to
+        // be last, which is the opposite of what a dump is for.
         const now = new Date();
         const yyyy = now.getFullYear();
         const mm = String(now.getMonth() + 1).padStart(2, '0');
         const dd = String(now.getDate()).padStart(2, '0');
         const hh = String(now.getHours()).padStart(2, '0');
         const min = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
 
-        // Format: YYYY-MM-DD_HHhMM
-        this.dumpSubDir = `${yyyy}-${mm}-${dd}_${hh}h${min}`;
+        // Format: YYYY-MM-DD_HHhMMmSS
+        this.dumpSubDir = `${yyyy}-${mm}-${dd}_${hh}h${min}m${ss}`;
 
         // Ensure logs directory exists. Restricted permissions because the dump
         // files written next to app.log contain the authenticated DOM of a real
@@ -294,6 +301,60 @@ function tzOffset() {
     return `${sign}${hh}:${mm}`;
 }
 
-module.exports = new Logger();
-module.exports.LoggerClass = Logger;
-module.exports.LEVELS = LEVELS;
+/**
+ * The logger, built the first time something actually uses it.
+ *
+ * F-38. `module.exports = new Logger()` ran the constructor at require time, and
+ * the constructor touches the filesystem: it resolves the log directory, creates
+ * it, chmods an existing app.log and rotates it. So merely *importing* any module
+ * that wants a logger - seven of them - could throw on a read-only or full disk,
+ * and it did so before `main()` had a chance to report anything. An import is not a
+ * reason to fail, and a diagnostic aid is the last thing that should be able to
+ * take an export down.
+ *
+ * A getter would do, but every call site says `logger.warn(...)`, and rewriting
+ * those to `logger().warn(...)` would touch seven files to fix a bug in one. The
+ * Proxy keeps the call sites and defers only the construction.
+ *
+ * `LoggerClass` and `LEVELS` are answered from the target rather than from the
+ * instance, so a caller that wants the class or the level names - a test, a future
+ * tool - gets them without paying for a directory to be created.
+ */
+const LOGGER_API = { LoggerClass: Logger, LEVELS };
+
+let loggerInstance = null;
+
+module.exports = new Proxy(LOGGER_API, {
+    get(target, prop, receiver) {
+        if (typeof prop === 'string' && prop in target) {
+            return Reflect.get(target, prop, receiver);
+        }
+        // `||=` rather than `??=`: a falsy instance is never a valid Logger, so the
+        // retry costs nothing and the intent is "construct once, ever".
+        const logger = (loggerInstance ||= new Logger());
+        const value = logger[prop];
+
+        // Bind only what the class provides, so `logger.warn` survives being pulled off
+        // the object. A property *installed on the instance* - a test spy, or
+        // anything else that patches the logger - is handed back unchanged.
+        //
+        // The test has to be "does the instance own it", not "is the name on the
+        // prototype": an installed property shadows the prototype without removing
+        // it, so `warn in Logger.prototype` stays true for a patched `warn` and the
+        // spy comes back bound. That is not hypothetical - jest.spyOn() read the
+        // value back through here and got `bound mockConstructor` with no `.mock`
+        // on it, which broke seven tests in a file that had nothing to do with this.
+        const installedLater = Object.prototype.hasOwnProperty.call(logger, prop);
+        const isClassMember = !installedLater && prop in Logger.prototype;
+        return (typeof value === 'function' && isClassMember) ? value.bind(logger) : value;
+    },
+
+    set(target, prop, value) {
+        (loggerInstance ||= new Logger())[prop] = value;
+        return true;
+    },
+
+    has(target, prop) {
+        return prop in target || prop in (loggerInstance ||= new Logger());
+    }
+});
