@@ -519,7 +519,22 @@ function newStats() {
         // above because they are a different kind of problem: the note exists and
         // carries a notice saying what is missing (F-64), whereas a failed page
         // means the page is simply not in the vault at all.
-        failedAssets: 0
+        failedAssets: 0,
+        // The notebook's section list came back empty, so nothing could be walked.
+        //
+        // F-77. Without this, a run that exported *nothing at all* was
+        // indistinguishable from a run that exported everything: no counter moves,
+        // the summary says "Export complete!" and the exit code is 0. Found by
+        // accident when an expired auth file made OneNote serve an error page whose
+        // <title> the tool helpfully reported as the notebook's name:
+        //
+        //     [SUCCESS] Export complete!
+        //     [INFO] Total Pages: 0
+        //     EXIT=0
+        //
+        // which is the worst shape this tool has: a user who believes their vault is
+        // current, having just written nothing over it.
+        notebookNotFound: false
     };
 }
 
@@ -555,7 +570,10 @@ function newStats() {
  */
 function exitCodeForStats(stats) {
     const missing = stats.failedPages + stats.failedSections + stats.failedGroups;
-    return missing > 0 ? 3 : 0;
+    // `notebookNotFound` counts as missing rather than as its own code: the run did
+    // not finish the job either way, and a script already checking "did this fully
+    // succeed" should not have to learn a fourth exit code. F-77.
+    return (missing > 0 || stats.notebookNotFound) ? 3 : 0;
 }
 
 /**
@@ -702,6 +720,18 @@ async function processSections(ctx) {
         logger.warn(warning);
     } else if (sections.length > 0) {
         logger.info(`Found ${sections.length} items at current level.`);
+    }
+
+    // F-77: no sections at the *top level* means the notebook's tree was never
+    // found, so nothing was walked. Recorded whatever `reason` says, because a
+    // genuinely empty notebook and a notebook that never loaded produce the same
+    // empty list - and neither is a success.
+    //
+    // Deep in the walk this is already covered: an empty group is legal in OneNote
+    // and is correctly silent. Only the top level is load-bearing, because only the
+    // top level is the whole notebook.
+    if (parentId === null && sections.length === 0) {
+        stats.notebookNotFound = true;
     }
 
     // Directory names already claimed at THIS level. Two sections can sanitise
@@ -1185,7 +1215,25 @@ function reportSummary(stats, linkStats, outputBase, stoppedFor = null) {
     const failures = stats.failedPages + stats.failedSections + stats.failedGroups;
 
     if (failures === 0 && !stoppedFor) {
-        logger.success('Export complete!');
+        // F-77: never "Export complete!" for a run that found no sections. Zero
+        // pages with zero failures used to mean success, which is only true of a
+        // notebook with nothing in it - and far more often means the notebook never
+        // loaded. The distinction is the whole point of saying something here.
+        if (stats.notebookNotFound) {
+            logger.error('Nothing was exported: the section list for this notebook was never found.');
+            logger.warn('  This is what an expired or refused sign-in looks like, and what a');
+            logger.warn('  OneNote error page served instead of the notebook looks like.');
+            logger.warn('  No notes or assets were written, so an existing export is untouched.');
+            // Precisely worded: an *empty* notebook folder is left behind, named
+            // after whatever the page's <title> was - "We couldn't create a passkey"
+            // is a real folder. Removing it would mean deleting a directory after a
+            // failed run, which is a far worse habit than an empty folder, and the
+            // root cause is the name detection rather than the directory.
+            logger.warn('  Re-authenticate and re-run. Use --dodump if it repeats: the page');
+            logger.warn('  that came up is written to logs/dumps.');
+        } else {
+            logger.success('Export complete!');
+        }
     }
 
     if (stoppedFor) {
