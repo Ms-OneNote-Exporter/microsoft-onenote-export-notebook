@@ -12,21 +12,54 @@
  */
 const fs = require('fs-extra');
 const path = require('path');
+const { program, InvalidArgumentError } = require('commander');
 const { listNotebooks, openNotebook, openNotebookByLink } = require('./navigator');
 
-const args = process.argv.slice(2);
-const get = (flag) => { const i = args.indexOf(flag); return i !== -1 ? args[i + 1] : null; };
+/**
+ * Rejects `--wait nonsense` at the point it is read.
+ *
+ * The old parser did `parseInt(get('--wait') || '15')`, which turned `--wait abc`
+ * into NaN and then printed `Extra wait after open: NaNs` - a diagnostic that waits
+ * for NaN seconds and says so. commander can do this in the parser it is given.
+ *
+ * @param {string} value - As typed
+ * @returns {string} The whole seconds, as a string for commander
+ */
+function seconds(value) {
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n) || n < 0) {
+        throw new InvalidArgumentError('Expected a number of seconds.');
+    }
+    return String(n);
+}
 
-const authFile = get('--auth-file');
-const notebookName = get('--notebook');
-const notebookLink = get('--notebook-link');
-const extraWait = parseInt(get('--wait') || '15', 10);
+// F-43: this used to hand-roll `process.argv` - a `get(flag)` helper and a
+// `if (!authFile) { console.error(...); process.exit(1) }` block at module scope -
+// while `commander` is already a dependency and already does exactly this for
+// src/index.js. The hand-rolled version reported a missing flag as exit 1, the same
+// code as a genuine failure, and accepted `--notebook-link` with no value as if it
+// had been given one.
+program
+    .name('diagnose-notebook')
+    .description('Dump a notebook\'s frames, screenshot and DOM shape for selector work.')
+    .requiredOption('--auth-file <path>', 'Path to authentication JSON file')
+    .option('--notebook <name>', 'Notebook to open, by name')
+    .option('--notebook-link <url>', 'Notebook to open, by its OneNote URL')
+    .option('--wait <seconds>', 'Extra seconds to wait after the notebook opens', seconds, '15')
+    .parse(process.argv);
 
-if (!authFile || (!notebookName && !notebookLink)) {
-    console.error('Usage:');
-    console.error('  node src/diagnose-notebook.js --auth-file <path> --notebook <name> [--wait <seconds>]');
-    console.error('  node src/diagnose-notebook.js --auth-file <path> --notebook-link <url> [--wait <seconds>]');
-    process.exit(1);
+const opts = program.opts();
+const authFile = opts.authFile;
+const notebookName = opts.notebook;
+const notebookLink = opts.notebookLink;
+const extraWait = Number.parseInt(opts.wait, 10);
+
+// A usage error rather than a diagnostic result, and still at module scope: this is
+// argument validation, and `diagnoseNotebook` below is where a real failure is
+// reported. commander exits 1 for it, which is what this script always did - the
+// improvement is the message and the strictness, not the code.
+if (!notebookName && !notebookLink) {
+    program.error('give either --notebook <name> or --notebook-link <url>');
 }
 
 const DUMP_DIR = path.resolve(__dirname, '../diag-dumps');
@@ -58,7 +91,12 @@ async function diagnoseNotebook() {
         if (!nb) {
             console.error(`[DIAG] Notebook "${notebookName}" not found. Available:`, notebooks.map(n => n.name));
             await browser.close();
-            process.exit(1);
+            // Thrown, not exited. F-43: this used to be `process.exit(1)` in the
+            // middle of the function, which meant the code below it - and the
+            // browser cleanup above - were unreachable to anything reading the file,
+            // and a test could not exercise the path without killing the runner. The
+            // handler at the bottom turns it back into a non-zero exit.
+            throw new Error(`notebook "${notebookName}" is not in this account`);
         }
 
         console.log(`[DIAG] Opening notebook: ${nb.name} (id: ${nb.id})`);
@@ -196,6 +234,9 @@ async function diagnoseNotebook() {
 }
 
 diagnoseNotebook().catch(err => {
-    console.error('[DIAG] Fatal error:', err);
-    process.exit(1);
+    console.error('[DIAG] Fatal error:', err.message);
+    // `exitCode`, not `exit(1)`: the browser may still be closing, and killing the
+    // process here would truncate whatever it was writing. Same reasoning as the
+    // unhandled-rejection guard in src/index.js (F-56).
+    process.exitCode = 1;
 });

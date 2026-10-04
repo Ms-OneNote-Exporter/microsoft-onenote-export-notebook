@@ -9,19 +9,23 @@
  */
 const fs = require('fs-extra');
 const path = require('path');
+const { program } = require('commander');
 const { getAuthenticatedContextWithFile } = require('./auth-context');
 const { ONENOTE_URL } = require('./config');
 
-const args = process.argv.slice(2);
-const get = (flag) => { const i = args.indexOf(flag); return i !== -1 ? args[i + 1] : null; };
+// F-43: see the note in diagnose-notebook.js. The same hand-rolled `get(flag)`
+// parser, the same generic exit 1 for a usage error, and the same habit of calling
+// `process.exit` from inside the function that does the work.
+program
+    .name('diagnose-notebook-newpage')
+    .description('Capture the editor URL OneNote opens a notebook into, from a new page or popup.')
+    .requiredOption('--auth-file <path>', 'Path to authentication JSON file')
+    .requiredOption('--notebook <name>', 'Notebook to open, by name')
+    .parse(process.argv);
 
-const authFile = get('--auth-file');
-const notebookName = get('--notebook');
-
-if (!authFile || !notebookName) {
-    console.error('Usage: node src/diagnose-notebook-newpage.js --auth-file <path> --notebook <name>');
-    process.exit(1);
-}
+const opts = program.opts();
+const authFile = opts.authFile;
+const notebookName = opts.notebook;
 
 const DUMP_DIR = path.resolve(__dirname, '../diag-dumps');
 const NOTEBOOK_IMG_SELECTOR = 'tr img[alt="Classic Notebook"]';
@@ -73,7 +77,9 @@ async function run() {
     if (rowIndex < 0) {
         console.error(`[DIAG] Notebook "${notebookName}" not found!`);
         await browser.close();
-        process.exit(1);
+        // Thrown rather than exited, so the browser cleanup above is the last thing
+        // that runs here and the handler below decides the exit code (F-43).
+        throw new Error(`notebook "${notebookName}" is not in this account`);
     }
 
     console.log(`[DIAG] Found notebook at row ${rowIndex}. Clicking...`);
@@ -130,6 +136,7 @@ async function run() {
 }
 
 run().catch(err => {
-    console.error('[DIAG] Fatal:', err);
-    process.exit(1);
+    console.error('[DIAG] Fatal:', err.message);
+    // `exitCode`, not `exit(1)` - see the same note in diagnose-notebook.js.
+    process.exitCode = 1;
 });

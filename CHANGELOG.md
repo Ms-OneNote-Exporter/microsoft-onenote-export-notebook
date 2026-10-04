@@ -38,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The `diagnose-*` scripts take their arguments through `commander` now.** Both ship in
+  the package and both hand-rolled `process.argv`, which had two consequences worth
+  knowing about: a flag given without its value was read as `undefined` and failed later
+  with a misleading message, and `--wait abc` produced a diagnostic that waited for `NaN`
+  seconds and said so. Both are now usage errors, and `--help` lists the options. Failures
+  inside the scripts are thrown and reported at the top rather than calling
+  `process.exit` part-way through, so the browser cleanup always runs.
+
+  The scripts stay in the tarball: they are the only tooling for working on the scrapers,
+  and shipping them is what makes a selector finding reproducible.
+
 - **A version tag now creates the GitHub Release as well as the npm publication.**
   Tagging has always been the release, but only half of it was automated: seven
   tags reached the registry between v0.2.1 and v0.3.7 and this repository had no

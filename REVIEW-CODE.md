@@ -1011,7 +1011,55 @@ counts at the top of §7 are recomputed by `test/reviewDoc.test.js` rather than 
 | Sev | Still open |
 |-----|-------------|
 | Low/Info | F-18 unused `content.title` · F-19 the `className` guard asymmetry (latent, unreachable today) · F-27 image `alt` discarded · F-28 first-row-as-header assumption · **F-68** two same-named pages share one dump name, so the first pair is overwritten · F-43 the `diagnose-*` scripts hand-roll `process.argv` parsing and call `process.exit` inside functions · F-49 images always written `.png`, no `content-type` check · F-54 order-dependent page-label stripping (documented, deliberately not fixed — not a live label shape) |
-| Untriaged (§6, no ID) | `openNotebook` leaks the listing page · the download popups leak on the error path · `linkResolver`'s case-folding vs a case-sensitive filesystem, and its second full read/write pass ger()` runs
+| Untriaged (§6, no ID) | `openNotebook` leaks the listing page · the download popups leak on the error path · `linkResolver`'s case-folding vs a case-sensitive filesystem, and its second full read/write pass |
+
+**Closed rather than fixed, and deliberately not counted as open.** F-21 was
+recorded as a Medium, "fixing" it broke the exporter, and a real run disproved it —
+so it is reverted, not pending. F-20 was a High until the live capture showed the
+cross-table collision cannot occur, and was corrected down to Low with the name check
+kept as defence-in-depth. Both are the register working, not two more items of work.
+
+### Lesson worth keeping (from F-21)
+
+F-21 was a Medium finding I was confident about, and "fixing" it broke the exporter. The
+claim — "a failed back-navigation leaves the frame in the wrong tree" — was plausible and
+unverified. The same review had already established the rule it violated: *no speculation
+presented as fact*. Coding reading can tell you a return value is ignored; it cannot tell
+you the ignored value is load-bearing. One real run answered that in a minute.
+
+So: findings that assert a *runtime consequence* rather than a *code defect* need
+execution evidence before any behaviour changes. The distinguishing question is "can I
+demonstrate this input, and what happens?" — for F-21 the honest answer was "I don't know
+what happens", and the fix should have been a log line, not a throw.
+
+### Next session, in priority order
+
+**The first three items shipped** — `processSections` (F-74), the F-38 residual and F-43.
+The list is replaced rather than accumulated, because "what this review still owes" is the
+only useful version of this section, and the previous list scheduled F-44/F-45/F-46,
+F-36/F-37, F-32, F-23 and F-40/F-48 — all shipped.
+
+1. **F-73 — an untitled page named something else is still refused.** The open half of
+   F-67. The canvas markup carries a per-page object id that would decide it exactly and
+   retire the label list; that needs verifying against a live untitled page first. The
+   alternative — accept any empty canvas title — converts a reported failure into a
+   possible silent wrong write, and is **not** recommended.
+2. **F-49 / F-27 — asset fidelity.** Images are always written `.png` regardless of the
+   real format, and image `alt` text is discarded, so `![[assets/x.png|alt]]` would
+   round-trip. Both change output, and the decision is taken: the extension follows the
+   real format. The PR is marked for review rather than merged, because every image
+   filename changes.
+3. **F-18 / F-28 / F-54 — the remaining parser and scraper polish**, plus
+   `openNotebook`'s leaked listing page and the download popups that leak on the error
+   path. All Low. All want a browser run to confirm against the live UI.
+4. **`linkResolver`'s case-folding and second full read/write pass.** The correctness half
+   is done; this is the cost half, and it wants a measurement on a real notebook rather
+   than a guess about which of the two matters.
+5. **F-68 — two same-named pages share one dump name**, so the first pair is overwritten.
+   Deliberately narrow: the PNG is named after its HTML so a bug report naming one finds
+   the other, and every fix here makes that harder.
+6. **F-19 — the `className` guard asymmetry**, recorded as latent and unreachable today.
+   Listed so it is not mistaken for done; it is not worth a change on its own.
    `ensureDirSync` at require time, so merely importing any module can throw on a
    read-only filesystem. One line of laziness, and the only remaining import-side-effect
    in the codebase. `dumpSubDir`'s minute granularity is cosmetic next to it.
