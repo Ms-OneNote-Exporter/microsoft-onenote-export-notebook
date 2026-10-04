@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-04
+
+A **minor**. Most of this release is the output of running the exporter against a
+real notebook repeatedly and fixing what the runs exposed — including one defect
+that had been hiding in plain sight. The CLI contract is unchanged and no
+dependency moved.
+
+**Two things can surprise an existing consumer**, and both are called out in full
+below rather than left to be discovered:
+
+1. **Image filenames can change.** An image is now named after the format it
+   actually is, so a GIF in a note becomes `…_img_1.gif` rather than `…_img_1.png`
+   holding GIF data. Your notes are unaffected, but anything that scripts over the
+   export folder — or references one of those files from another note — should be
+   checked first.
+2. **A run that exports nothing now fails.** If OneNote's section list cannot be
+   found at all, the exit code is `3` rather than `0`. Previously such a run
+   reported `Export complete!` and exited successfully having written nothing,
+   which is the worst failure this tool can have: you believing your vault is
+   current, having just overwritten nothing with nothing.
+
+Also worth knowing: a page that fails to settle now leaves its canvas behind in
+the debug dumps, which is what made most of the fixes above diagnosable at all.
+
 ### Added
 
 - **`--screenshot`: a PNG beside every `--dodump` HTML file.**
