@@ -145,11 +145,72 @@ function pickNameFromAttributes(candidate, pattern = fileExtensionPattern()) {
     return '';
 }
 
+/**
+ * The image formats this tool can name, keyed by the bytes that identify them.
+ *
+ * F-49. Images used to be written `.png` whatever they actually were, so a GIF in a
+ * note became a file called `…_img_1.png` holding GIF data: the extension lied, and
+ * anything that trusted it - a viewer, a converter, a search - had to sniff the file
+ * itself to find out.
+ *
+ * Magic bytes rather than the URL or the response's content-type. A OneNote image
+ * usually arrives through `getimage.ashx`, which carries no extension at all, and the
+ * content-type is whatever the endpoint felt like returning - so the bytes are the
+ * only thing here that is actually evidence.
+ *
+ * Ordered longest-match-first within each entry, and deliberately a *small* set: an
+ * unrecognised image keeps the `.png` it has always had, which is a wrong name for an
+ * exotic format but not a broken one. Obsidian renders by content anyway.
+ */
+const IMAGE_SIGNATURES = [
+    { ext: 'png', bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+    { ext: 'jpg', bytes: [0xff, 0xd8, 0xff] },
+    { ext: 'gif', ascii: 'GIF8' },
+    { ext: 'bmp', bytes: [0x42, 0x4d] },
+    { ext: 'tiff', bytes: [0x49, 0x49, 0x2a, 0x00] },
+    { ext: 'tiff', bytes: [0x4d, 0x4d, 0x00, 0x2a] },
+    { ext: 'ico', bytes: [0x00, 0x00, 0x01, 0x00] },
+    // RIFF....WEBP - the format is at offset 8, not the start.
+    { ext: 'webp', ascii: 'WEBP', offset: 8 },
+    // ISO base media: ....ftyp<brand>
+    { ext: 'avif', ascii: 'ftypavif', offset: 4 },
+    { ext: 'heic', ascii: 'ftypheic', offset: 4 }
+];
+
+/**
+ * The extension an image's own bytes say it has.
+ *
+ * @param {Buffer} bytes - The start of the file, at least 16 bytes
+ * @returns {string|null} Extension without the dot, or null when unrecognised
+ */
+function imageExtensionFromBytes(bytes) {
+    if (!Buffer.isBuffer(bytes) || bytes.length < 4) return null;
+
+    for (const sig of IMAGE_SIGNATURES) {
+        const at = sig.offset || 0;
+        // An entry is matched by bytes, by ascii, or by both - so the length that
+        // matters is whichever it has. Reading `.length` off the wrong one throws
+        // rather than falling through to the next format.
+        const need = sig.bytes ? sig.bytes.length : sig.ascii.length;
+        if (bytes.length < at + need) continue;
+        if (sig.bytes && sig.bytes.every((b, i) => bytes[at + i] === b)) return sig.ext;
+        if (sig.ascii && bytes.slice(at, at + sig.ascii.length).toString('latin1') === sig.ascii) return sig.ext;
+    }
+
+    // SVG is text, so it has no signature to compare against - but it does have a
+    // document element, and reading the first few bytes is enough to find one.
+    const head = bytes.slice(0, 200).toString('utf8').trimStart();
+    if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) return 'svg';
+
+    return null;
+}
+
 module.exports = {
     FILE_EXTENSIONS,
     ATTACHMENT_NAME_FIELDS,
     fileExtensionPatternSource,
     fileExtensionPattern,
     looksLikeFileName,
+    imageExtensionFromBytes,
     pickNameFromAttributes,
 };

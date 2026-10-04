@@ -15,10 +15,66 @@ describe('createMarkdownConverter', () => {
         td = createMarkdownConverter();
     });
 
-    describe('local images (F-27: alt text is discarded)', () => {
+    describe('local images (F-49 format, F-27 alt text)', () => {
         it('emits an Obsidian embed for a downloaded image', () => {
             const html = '<img data-local-src="Note_img_1" alt="a chart">';
+            expect(td.turndown(html)).toBe('![[assets/Note_img_1.png|a chart]]');
+        });
+
+        // F-49. The exporter renames the file when the bytes say it is not a PNG, and
+        // rewrites the attribute to the full name - so the rule must use it as-is, the
+        // same way the video rule above already had to after F-24. Anything else left
+        // a dead link for every GIF.
+        it('uses the extension the exporter actually wrote', () => {
+            const html = '<img data-local-src="Note_img_1.gif" alt="a chart">';
+            expect(td.turndown(html)).toBe('![[assets/Note_img_1.gif|a chart]]');
+        });
+
+        it('still defaults to png when no extension is advertised', () => {
+            const html = '<img data-local-src="Note_img_1" alt="">';
             expect(td.turndown(html)).toBe('![[assets/Note_img_1.png]]');
+        });
+
+        // F-27. `![[assets/x.png|alt]]` is Obsidian's alt syntax. Alt text used to be
+        // dropped entirely, so a note full of images lost every caption and every
+        // accessibility label the author had written - and the file on disk was the
+        // only thing left of it.
+        it('carries the alt text through as the alt', () => {
+            const html = '<img data-local-src="Note_img_1" alt="Glass breaking, black on white">';
+            expect(td.turndown(html))
+                .toBe('![[assets/Note_img_1.png|Glass breaking, black on white]]');
+        });
+
+        it('adds no pipe when there is no alt', () => {
+            expect(td.turndown('<img data-local-src="Note_img_1">'))
+                .toBe('![[assets/Note_img_1.png]]');
+        });
+
+        it('drops alt that is too long to be a caption', () => {
+            // The scraper already trims OneNote's ACCESSIBILITY boilerplate, but a
+            // paste can still be enormous, and a 4 KB "alt" is not what the pipe
+            // syntax is for. The file still embeds; only the alt is dropped.
+            const html = `<img data-local-src="Note_img_1" alt="${'x'.repeat(400)}">`;
+            expect(td.turndown(html)).toBe('![[assets/Note_img_1.png]]');
+        });
+
+        it('keeps a printout image\'s alt, which is the document title', () => {
+            // Measured on the real notebook: OneNote gives every image it renders for a
+            // printout the printout's title as its alt. It is what the DOM holds, so it
+            // is reproduced - suppressing it was tried and removed, because that page
+            // carries no printout class at all and so no rule could be shown to
+            // distinguish it from a genuine caption.
+            const html = '<img data-local-src="Note_img_1" class="WACImage" ' +
+                'alt="Use it in Your Application | Blockchain Data API (V2)">';
+            expect(td.turndown(html))
+                .toBe('![[assets/Note_img_1.png|Use it in Your Application \\| Blockchain Data API (V2)]]');
+        });
+
+        it('does not let a pipe inside the alt break the embed', () => {
+            // The pipe is Obsidian's own delimiter, so an unescaped one would end the
+            // embed early and leave the rest as prose.
+            const html = '<img data-local-src="Note_img_1" alt="left | right">';
+            expect(td.turndown(html)).toBe('![[assets/Note_img_1.png|left \\| right]]');
         });
     });
 

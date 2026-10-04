@@ -80,7 +80,39 @@ function createMarkdownConverter() {
         filter: (node) => node.nodeName === 'IMG' && node.getAttribute('data-local-src'),
         replacement: (content, node) => {
             const localId = node.getAttribute('data-local-src');
-            return `![[assets/${localId}.png]]`;
+
+            // F-49: the exporter sets the full name when it has renamed the file, so a
+            // GIF is `…_img_1.gif` and not `…_img_1.png` holding GIF bytes. A bare id
+            // still defaults to .png, which is what every caller that does not know the
+            // format can honestly say.
+            const name = localId.includes('.') ? localId : `${localId}.png`;
+
+            // F-27: `![[assets/x.gif|alt]]` is Obsidian's alt syntax, and alt text was
+            // being dropped entirely - so a note full of images lost every caption,
+            // every description of what a picture shows, and every accessibility label
+            // the author had written. The scraper has already trimmed OneNote's
+            // ACCESSIBILITY boilerplate and anything over 300 characters, so what
+            // arrives here is the author's own text.
+            // F-27: `![[assets/x.png|alt]]` is Obsidian's alt syntax, and alt text used
+            // to be dropped entirely, so a note full of images lost every caption the
+            // author had written. The scraper has already trimmed OneNote's
+            // ACCESSIBILITY boilerplate and anything over 300 characters, so what
+            // arrives here is the author's own text.
+            //
+            // Note, measured rather than assumed: the images of a *printout* also carry
+            // the printout's own title as their alt, so that title now appears on each
+            // printed page. It is what the DOM holds, so it is reproduced faithfully -
+            // and an earlier attempt to suppress it on `data-is-printout` was removed
+            // because the one real printout page in the notebook carries no printout
+            // class at all, so the branch could not be shown to do anything. See F-27's
+            // limit in REVIEW-CODE.md rather than guessing at a better rule.
+            const alt = (node.getAttribute('alt') || '').trim();
+            // The pipe is Obsidian's own delimiter, so a literal one has to be escaped
+            // or it ends the embed early and the rest of the caption is left as prose in
+            // the note. Found by the test that was written for this line.
+            const piped = alt && alt.length <= 300 ? `|${alt.replace(/\|/g, '\\|')}` : '';
+
+            return `![[assets/${name}${piped}]]`;
         }
     });
 
