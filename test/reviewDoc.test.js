@@ -194,6 +194,41 @@ describe('the register renders as one table', () => {
     });
 });
 
+describe('the document still has all of its sections', () => {
+    // Every other test in this file reads a *table*. None of them notices when the
+    // prose around the tables is destroyed: a regex that was meant to remove one
+    // bullet from the "still open" row ate 17 lines, taking the "Lesson worth
+    // keeping" section, the "Next session, in priority order" heading and the first
+    // three items of that list with it. All twelve register tests stayed green,
+    // because what they check was still there and what was lost was not a table.
+    //
+    // The register's whole purpose is "what still needs doing". A document that has
+    // quietly stopped answering that is worse than one that never existed, so the
+    // sections themselves are asserted.
+    it.each([
+        ['## 0. Decisions taken', 'the decisions'],
+        ['## 7. Findings register', 'the register'],
+        ['### Fix ladder', 'the fix ladder'],
+        ['## 8. Definition of done', 'the definition of done'],
+        ['## 8a. Session log', 'the session log'],
+        ['**Closed rather than fixed', 'the closed-rather-than-fixed note'],
+        ['### Lesson worth keeping', 'the lesson worth keeping'],
+        ['### Next session, in priority order', 'the priority list'],
+        ['## 9. Open questions', 'the open questions'],
+    ])('still has %s (%s)', (heading) => {
+        expect(doc).toContain(heading);
+    });
+
+    it('still lists what is owed, and the list is not empty', () => {
+        // The priority list is the section most likely to rot, because closing an
+        // item is the one edit that always applies to it.
+        const list = doc.slice(doc.indexOf('### Next session, in priority order'));
+        const items = [...list.matchAll(/^\d+\. \*\*/gm)];
+        expect(items.length).toBeGreaterThan(0);
+        expect(list).toContain('Deliberately not scheduled');
+    });
+});
+
 describe('the standing table agrees with the register', () => {
     /**
      * The §8a standing section, from the "State" table through the "Still open"
