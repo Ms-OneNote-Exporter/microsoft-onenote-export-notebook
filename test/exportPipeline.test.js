@@ -37,6 +37,37 @@ describe('runExport structure', () => {
         expect(helpers).toHaveLength(3);
     });
 
+    // The section walk used to take eight positional parameters and recurse with
+    // seven of them again, and one of those was `stats = newStats()` - a mutable
+    // default. Any caller that forgot to pass a tally got its own object, and the
+    // summary reported whichever call finished last instead of the run's.
+    it('gives the section walk one context object, not a positional list', () => {
+        const from = source.indexOf('async function processSections(');
+        const signature = source.slice(from, from + 400);
+        // Destructured in the signature, so a caller cannot transpose arguments.
+        expect(signature).toContain('processSections(ctx)');
+        expect(signature).toContain('stats');
+        expect(signature).not.toMatch(/=\s*new\s+\w+\(\)/);
+    });
+
+    it('recurses by inheriting the context and naming only what changes', () => {
+        // The property the refactor was for: a field added to the walk is added in
+        // one place, and the recursion cannot forget to pass it on.
+        const recursive = source.slice(source.indexOf('Entering group:'));
+        expect(recursive).toContain('...ctx');
+        expect(recursive).toContain('parentId: item.id');
+    });
+
+    it('never writes to the options object it is handed', () => {
+        // Three functions take `options = {}`, which is one shared object for every
+        // call that omits the argument - the same hazard as `stats = newStats()`,
+        // and harmless only for as long as nobody writes to it. So the property
+        // worth pinning is the write, not the shape of the default.
+        const writes = [...source.matchAll(/^\s*options(?:\.\w+)+\s*=[^=]/gm)]
+            .map((m) => m[0].trim());
+        expect(writes).toEqual([]);
+    });
+
     // The drift that motivated this: two different timeouts for the same wait.
     it('has only one waitForSelector for .sectionList, so the two paths cannot disagree', () => {
         const waits = source.match(/waitForSelector\('\.sectionList'/g) || [];
