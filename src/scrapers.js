@@ -759,9 +759,46 @@ async function getPageContent(frame) {
                     const isOneNoteImage = srcLower.includes('getimage.ashx');
                     const isWACImage = className.includes('wacimage');
 
-                    const isRealImage = isPrintout || (isOneNoteImage || isWACImage || (
-                        !isMicrosoftUI && !isGenericIcon && !hasUIClass &&
-                        (width > 10 || height > 10 || (width === 0 && !className))
+                    // F-71: an image that belongs to a file chip is the chip's own
+                    // icon, not something the author put in the note.
+                    //
+                    // OneNote draws an attachment as a container holding an icon and a
+                    // filename label, and that icon is an ordinary <img> that clears
+                    // every other test in this function - it is not a OneNote UI
+                    // asset, it is not one.png/box4x.png, its class carries no
+                    // "handle"/"one_", and at 16x16 it is comfortably over the size
+                    // floor. So the chip was scraped twice: once correctly, as the
+                    // attachment, and once as a page image:
+                    //
+                    //     assets/Alerte-au-gogole_480p.mp4      <- the attachment
+                    //     assets/attachment_Videos mp4_img_1.png <- the chip's icon
+                    //
+                    // OneNote serves that icon as a blob: URL, which the request
+                    // context cannot fetch (F-51), so it never downloaded and every
+                    // run left the note carrying
+                    //
+                    //     > 1 asset could not be downloaded
+                    //     > - assets/attachment_Videos mp4_img_1.png
+                    //
+                    // for a file that was never content, and counted it in the
+                    // summary's failure total. Three of the notebook's four
+                    // attachment pages did this.
+                    //
+                    // Keyed on the chip rather than on the scheme on purpose: the
+                    // icon is chrome whichever way it is served, and an https icon
+                    // would download happily into assets/ and still be worth
+                    // nothing. Measured across a real run, every blob image in the
+                    // notebook was a chip icon and no genuine image was.
+                    const isFileChipIcon = !!origImg.closest('.WACEFContainer');
+
+                    // A printout is kept whatever it sits inside: it is page content
+                    // that happens to be wrapped, and refusing one would lose a
+                    // figure rather than a glyph.
+                    const isRealImage = isPrintout || (!isFileChipIcon && (
+                        isOneNoteImage || isWACImage || (
+                            !isMicrosoftUI && !isGenericIcon && !hasUIClass &&
+                            (width > 10 || height > 10 || (width === 0 && !className))
+                        )
                     ));
 
                     if (isRealImage) {

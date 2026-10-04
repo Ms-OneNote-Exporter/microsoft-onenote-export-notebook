@@ -377,6 +377,74 @@ describe('scrapers against captured fixtures', () => {
         });
     });
 
+    describe("a file chip's icon is not a page image (F-71)", () => {
+        /**
+         * The chip was scraped twice: once correctly as the attachment, and once as
+         * a page image that was never content.
+         *
+         * OneNote draws an attachment as a container holding an icon and a filename
+         * label. That icon is an ordinary `<img>` which clears every other test the
+         * image filter makes — not a OneNote UI asset, not `one.png`/`box4x.png`, no
+         * `handle`/`one_` in its class, and at 16×16 comfortably over the size floor.
+         * So each attachment page grew a phantom image asset:
+         *
+         *     assets/Alerte-au-gogole_480p.mp4       the attachment, correct
+         *     assets/attachment_Videos mp4_img_1.png the chip's icon
+         *
+         * Served as a `blob:` URL, which the request context cannot fetch (F-51), so
+         * it never downloaded. The cost was not the wasted attempt: it was a
+         * permanent `> 1 asset could not be downloaded` callout in the note, naming
+         * a file that was never in the notebook, plus a permanent addition to the
+         * run summary's failure count. Three of four attachment pages did this.
+         *
+         * The fixture carries a real image next to the chip, because the tempting
+         * fixes — skip small images, skip blob images — pass a test written only
+         * about the icon while dropping every picture on the page.
+         */
+        const { createMarkdownConverter } = require('../src/parser');
+
+        let content;
+        let markdown;
+
+        beforeAll(async () => {
+            await loadFixture('attachment-chip-icon.html');
+            content = await getPageContent(page);
+            markdown = createMarkdownConverter().turndown(content.contentHtml);
+        });
+
+        itBrowser('still exports the chip as the attachment it is', async () => {
+            // The exclusion must cost the *icon*, never the file. This is the half
+            // that a sloppy version of the fix gets right by accident and the
+            // careful version has to keep getting right on purpose.
+            expect(content.attachments).toHaveLength(1);
+            expect(content.attachments[0].originalName).toBe('Sample_Video_480p.mp4');
+        });
+
+        itBrowser('does not collect the chip icon as a page image', async () => {
+            expect(content.images).toHaveLength(1);
+            expect(content.images[0].src).not.toContain('office.png');
+        });
+
+        itBrowser('keeps a real image on the same page', async () => {
+            // Without this, "skip every image inside a chip" and "skip every image"
+            // are indistinguishable, and the second one loses the user's notes.
+            expect(content.images[0].src).toContain('getimage.ashx');
+            expect(markdown).toContain('![[assets/img_0.png]]');
+        });
+
+        itBrowser('does not spend an image id on the icon', async () => {
+            // Without the fix the icon takes `img_0` and the real picture is pushed to
+            // `img_1` - so the fix also stops a phantom from renumbering the user's
+            // genuine images. Asserted on the id rather than on the embeds, because
+            // the embeds are a poor probe here: before the fix the icon was collected
+            // as an image and still produced **no embed**, which is exactly why the
+            // defect was invisible in the note. It wrote an asset nothing pointed at,
+            // then reported that asset as missing.
+            expect(content.images.map((i) => i.id)).toEqual(['img_0']);
+            expect(content.images[0].src).toContain('getimage.ashx');
+        });
+    });
+
     describe('audio and video attachments keep their own names (F-70)', () => {
         /**
          * A naming failure, not a detection one, and that is what made it quiet.

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<!--
+  Fixture: a file chip's icon sitting next to a real image, as captured in
+  logs/dumps/2026-10-04_00h09/ and de-identified like the other fixtures.
+
+  This is the F-71 shape. OneNote draws an attachment as a container holding an
+  icon and a filename label, and that icon is an ordinary <img> that clears
+  every other test the image filter makes - not a OneNote UI asset, not
+  one.png/box4x.png, no "handle"/"one_" in its class, and comfortably over the
+  size floor. So the chip was scraped twice:
+
+      assets/Alerte-au-gogole_480p.mp4       <- the attachment, correct
+      assets/attachment_Videos mp4_img_1.png <- the chip's icon, not content
+
+  and because OneNote serves that icon as an object URL the request context cannot
+  fetch (F-51), every such page kept a permanent "1 asset could not be
+  downloaded" callout for a file that was never in the note.
+
+  Both cases are here on purpose. The second outline holds a real image, because
+  the tempting version of this fix - "skip small images", or "skip images whose
+  src is an object URL" - would pass a test written only about the icon while
+  quietly dropping every picture on the page. The rule is about the *chip*, and a
+  real image is not in one.
+
+  The icon's src is an ordinary https URL here rather than the object URL the real
+  UI uses, for the same reason the other fixtures substitute: that scheme is a real
+  one and a committed fixture must not contain it. The exclusion keys on the chip,
+  not the scheme - an https icon would download happily into assets/ and still be
+  worth nothing.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>attachment chip icon fixture</title>
+<style>
+  /* Real dimensions: the image filter has a size floor, so the icon has to be
+     over it to reproduce the bug, and the content image has to be visible. */
+  body { margin: 0; }
+  #OreoCanvas { display: block; width: 800px; }
+  .WACEFContainer { display: block; width: 320px; }
+  .WACEFOverlay { display: block; width: 320px; height: 24px; }
+  /* OneNote draws this icon 16x16 - the size is why it passed the filter. */
+  .WACEFImage { display: inline-block; width: 16px; height: 16px; }
+  .WACEFFilename { display: block; width: 300px; height: 20px; }
+  img.realcontent { display: block; width: 700px; height: 700px; }
+</style>
+</head>
+<body>
+
+  <div id="OreoCanvas" class="canvasContainer">
+
+    <div class="OutlineContainer">
+      <div class="TitleOutline">Chip Icon</div>
+    </div>
+
+    <div class="OutlineContainer">
+      <div class="Outline"><div class="OutlineContent">
+        <p class="Paragraph">Video below</p>
+        <div class="WACEFContainer" role="link" aria-label="Sample_Video_480p.mp4" tabindex="0">
+          <span class="WACEFOverlay" title="Sample_Video_480p.mp4"></span>
+          <!-- THE F-71 CASE: the chip's own icon. Not content. -->
+          <img class="WACEFImage" role="presentation" alt="Sample_Video_480p.mp4"
+               title="Sample_Video_480p.mp4"
+               src="https://res.public.example-cdn.invalid/officeonline/o/s/office.png">
+          <div class="WACEFFilename" role="presentation" title="Sample_Video_480p.mp4">Sample_Video_480p</div>
+        </div>
+      </div></div>
+    </div>
+
+    <div class="OutlineContainer">
+      <div class="Outline"><div class="OutlineContent">
+        <p class="Paragraph">A picture, which must survive the fix:</p>
+        <!-- THE CASE THAT MUST NOT BE SWEPT UP WITH THE ICON -->
+        <img class="wacimage realcontent" role="presentation" alt="a real picture"
+             src="https://res.public.example-cdn.invalid/officeonline/getimage.ashx?id=1">
+      </div></div>
+    </div>
+
+  </div>
+</body>
+</html>
