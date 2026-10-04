@@ -319,6 +319,21 @@ async function tryUIClick(contentFrame, attachId, outputPath) {
             new Promise(r => setTimeout(() => r({ type: 'timeout' }), 10000))
         ]);
 
+        // A popup can arrive *after* this strategy has decided - OneNote opens a
+        // viewer tab per double-click - and when it does, nothing else in the
+        // codebase closes it. The browser context is shared with the whole export,
+        // so every leaked tab keeps rendering for the rest of the run, on a machine
+        // that is already running OneNote, a browser and a scraper.
+        //
+        // Not awaited: `popupPromise` resolves up to 30s later, and this path must
+        // not sit waiting for a popup that may never come. Handing the close to the
+        // promise is also what covers the case where the popup arrived first and the
+        // download won the race - the popup exists either way, and the code below
+        // only closes one it is about to use.
+        if (result.type !== 'popup') {
+            popupPromise.then((p) => p && p.close().catch(() => null));
+        }
+
         if (result.type === 'download') {
             await result.value.saveAs(outputPath);
             return { ok: true, elementMissing: false };
@@ -438,6 +453,9 @@ async function downloadAttachment(contentFrame, info, outputPath) {
 
 module.exports = {
     downloadAttachment,
+    // Exported for tests: the strategy that opens a browser popup per double-click,
+    // and is the only place in the codebase that can leak one.
+    tryUIClickForTest: tryUIClick,
     // Exported so the export's summary can report them, and so tests can assert
     // the counters rather than parsing log output.
     getStrategyStats,
