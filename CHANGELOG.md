@@ -143,6 +143,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   found on: phantom download attempts 3 → 0, false "could not be downloaded" callouts
   3 → 0, and the `Assets failed` line gone, with every real file still exported.
 
+- **A pasted picture no longer goes missing from its note.** Two separate defects both
+  had to occur, so fixing either one alone would still have lost the image.
+
+  OneNote draws a pasted picture *beside* the page's text blocks rather than inside
+  one, while the image scraper only looked inside them. The picture was therefore
+  never collected at all — and even if it had been, there was no copy of it in the note
+  for the download to be attached to, so the file would have landed in `assets/` with
+  nothing pointing at it.
+
+  ```html
+  <div id="PageContentContainer">
+    <div class="OutlineContainer">        the text
+    <div class="WACImageContainer">       the picture, beside the text
+      <img class="WACImage">
+    <div class="OutlineContainer">        more text
+  </div>
+  ```
+
+  Separately, a page was considered ready to scrape as soon as two readings in a row
+  matched. A picture whose embedded source had not finished decoding looks identical
+  twice in a row, so the wait ended and the image was scraped while it was still
+  arriving. Across seven runs of one notebook the image was ready in four and not in
+  three — and was exported in none of them. The wait now also requires that no picture
+  is still missing its source, bounded by the timeout that was already there, so an
+  image that never arrives costs a pause rather than a hang. Nothing paid for it:
+  a full export took the same 3m46s before and after.
+
+  Live, same notebook, the page went from `Saved (0 assets)` to `Saved (1 assets)`, and
+  the picture was embedded between the two paragraphs that name its position. **Three**
+  pictures came back rather than one — a page that prints out a document had been
+  dropping two more, silently, for the same reason.
+
 ## [0.3.7] - 2026-10-01
 
 A **patch**. The CLI contract, the exit codes and the output of a correct export

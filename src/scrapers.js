@@ -286,10 +286,41 @@ async function getPageContent(frame) {
             : Array.from(canvas.querySelectorAll('.WACEFContainer'))
                 .filter(el => !outlines.some(o => o.contains(el)));
 
+        // F-72: the same shape, holding a picture instead of a file.
+        //
+        // OneNote names its two out-of-outline content containers the same way -
+        // `WACEFContainer` for a file chip, `WACImageContainer` for a pasted image -
+        // and F-69 fixed only the first. A pasted image is drawn exactly the same
+        // way, absolutely positioned beside the outlines:
+        //
+        //     div#PageContentContainer
+        //       div.OutlineContainer
+        //       div.WACImageContainer[style*=absolute]   <- the picture
+        //         img.WACImage
+        //       div.OutlineContainer
+        //
+        // and the image loop further down walked `outlines` only, so this one was
+        // unreachable twice over: not collected, and with no clone in the note body
+        // the id would have nowhere to land even if it had been. Measured on the
+        // page it came from: 7 of its 25 images are inside an outline, and the
+        // missing one was not. In two separate runs its 1.9 MB base64 source was
+        // sitting in the DOM, fully loaded, while the export reported
+        // `Saved (0 assets)`.
+        //
+        // Restricted to `.WACImageContainer` for the same reason as above, and
+        // because it was measured rather than guessed: everything else living
+        // outside the outlines on a real page is OneNote's own furniture - an
+        // upsell button, a colour block, a task-pane close button. A rule of "any
+        // element outside an outline that holds an image" would export those.
+        const floatingImages = outlines.length === 0
+            ? []
+            : Array.from(canvas.querySelectorAll('.WACImageContainer'))
+                .filter(el => !outlines.some(o => o.contains(el)));
+
         /**
          * Visual order: top, then left, with a 10px band treated as one line.
          *
-         * Defined once because it is now used for two populations of content, and
+         * Defined once because it is now used for three populations of content, and
          * two copies of an ordering rule is how a note ends up with its attachment
          * in a different place from the paragraph that introduces it.
          */
@@ -303,14 +334,15 @@ async function getPageContent(frame) {
         // Sort content by visual position, so DOM order that does not match the
         // visual layout cannot flip the note.
         //
-        // Outlines and floating attachments go through this in ONE pass on purpose:
-        // the attachment is then placed by the same rule as everything around it,
-        // which is what puts it where the author put it - on the page this came
-        // from, between the paragraphs reading "PDF attached below" and "PDF
-        // attached above".
+        // Outlines and floating content go through this in ONE pass on purpose: a
+        // file or a picture is then placed by the same rule as everything around
+        // it, which is what puts it where the author put it - on the page the
+        // attachment came from, between the paragraphs reading "PDF attached
+        // below" and "PDF attached above".
         const blocks = [
-            ...outlines.map(el => ({ el, isFloatingAttachment: false })),
-            ...floatingAttachments.map(el => ({ el, isFloatingAttachment: true }))
+            ...outlines.map(el => ({ el, floating: false })),
+            ...floatingAttachments.map(el => ({ el, floating: true })),
+            ...floatingImages.map(el => ({ el, floating: true }))
         ]
             .map(b => ({ ...b, rect: b.el.getBoundingClientRect() }))
             .sort((a, b) => visualOrder(a.rect, b.rect));
@@ -321,12 +353,13 @@ async function getPageContent(frame) {
         // Prepare a clone for cleanup to avoid affecting the UI
         const contentDiv = document.createElement('div');
 
-        blocks.forEach(({ el, isFloatingAttachment }) => {
-            // A floating attachment is content, not chrome: cloned whole, with none
-            // of the outline handling below, which is about page metadata and about
-            // dragging handles. Its own subtree carries the file name in three
-            // places, which is what detection and labelling need.
-            if (isFloatingAttachment) {
+        blocks.forEach(({ el, floating }) => {
+            // Floating content is content, not chrome: cloned whole, with none of
+            // the outline handling below, which is about page metadata and about
+            // dragging handles. A file chip carries its name in three places and a
+            // picture container carries its <img>, and both are what detection,
+            // labelling and the markdown need to be able to see.
+            if (floating) {
                 contentDiv.appendChild(el.cloneNode(true));
                 return;
             }
@@ -719,8 +752,18 @@ async function getPageContent(frame) {
 
         // 4. Extract image info (including Printouts)
         const imageInfos = [];
-        outlines.forEach(outline => {
-            const originalImgs = Array.from(outline.querySelectorAll('img'));
+
+        // Walks the same `blocks` the note body was built from, not `outlines`.
+        //
+        // Walking the outlines is what made a pasted picture unreachable (F-72): the
+        // one this was found on lives in a `WACImageContainer` beside the outlines,
+        // so its <img> was in the page and not in anything this loop looked at. It
+        // had to be the same blocks rather than a second list, because the id found
+        // here is stamped on a *clone* in `contentDiv` - collect an image whose clone
+        // is not there and the file downloads to assets/ while the note stops
+        // referring to it, which is F-63's failure with a different cause.
+        blocks.forEach(block => {
+            const originalImgs = Array.from(block.el.querySelectorAll('img'));
             originalImgs.forEach((origImg) => {
                 let src = origImg.getAttribute('src');
                 if (src) {
