@@ -115,6 +115,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaviour, not only in naming. Files already in your vault keep their names;
   `output/` is overwritten rather than renamed in place.
 
+- **A file attachment no longer produces a phantom image beside it.** OneNote draws an
+  attachment as a container holding an icon and a filename label, and that icon was
+  scraped as an image in its own right — so each attachment page tried to download a
+  second file that was never content:
+
+  ```
+  assets/Alerte-au-gogole_480p.mp4       the attachment, correct
+  assets/attachment_Videos mp4_img_1.png the chip's icon, not content
+  ```
+
+  OneNote serves that icon as an object URL the download client cannot fetch, so it
+  never arrived — and every such page kept saying so, permanently, in the note:
+
+  ```
+  > ⚠️ **1 asset could not be downloaded.**
+  > - `assets/attachment_Videos mp4_img_1.png`
+  ```
+
+  That callout names a file the notebook never contained, and its own reassurance that
+  "a re-run can fill them in" was not true of any re-run. Runs also reported a
+  permanent `Assets failed` count made of nothing but these.
+
+  Images belonging to a file chip are now skipped, so the chip is represented once, as
+  the attachment it is. Genuine pictures are untouched — including attached images,
+  which OneNote renders in the page rather than in a chip. On the notebook this was
+  found on: phantom download attempts 3 → 0, false "could not be downloaded" callouts
+  3 → 0, and the `Assets failed` line gone, with every real file still exported.
+
 ## [0.3.7] - 2026-10-01
 
 A **patch**. The CLI contract, the exit codes and the output of a correct export
