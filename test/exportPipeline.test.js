@@ -172,7 +172,7 @@ describe('export pipeline end to end (real browser, offline)', () => {
     });
 
     itBrowser('references the image by its final asset name', () => {
-        expect(md).toContain('![[assets/The Page_img_1.png]]');
+        expect(md).toContain('![[assets/The Page_img_1.png|a one pixel png]]');
 
         const assetDir = path.join(sectionDir, 'assets');
         expect(fs.readdirSync(assetDir)).toContain('The Page_img_1.png');

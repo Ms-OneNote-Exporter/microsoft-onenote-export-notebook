@@ -4,6 +4,7 @@ const { listNotebooks, openNotebook, openNotebookByLink } = require('./navigator
 const { getSections, getPages, selectSection, selectPage, getPageContent, navigateBack, isSectionLocked, isGroupExpanded, readCanvasState } = require('./scrapers');
 const { createMarkdownConverter } = require('./parser');
 const { resolveInternalLinks } = require('./linkResolver');
+const { imageExtensionFromBytes } = require('./attachmentNames');
 const { withRetry, permanent } = require('./utils/retry');
 const { writeDebugDump } = require('./utils/dumps');
 const { classifyFetchTarget } = require('./utils/fetchHosts');
@@ -610,6 +611,46 @@ function emptyLookupWarning(parentId, reason) {
         'or the OneNote DOM may have changed.';
 }
 
+/** How much of a written image is read back to identify it. */
+const IMAGE_HEADER_BYTES = 200;
+
+/**
+ * The extension a written image really has, or null when it is plain PNG or unknown.
+ *
+ * Reads the first bytes of the file rather than trusting its name, and never throws:
+ * an image that cannot be identified keeps the `.png` it was written with, which is
+ * the behaviour before this existed.
+ *
+ * @param {string} filePath - The written file
+ * @returns {Promise<string|null>} Extension without the dot, or null
+ */
+async function realImageExtension(filePath) {
+    try {
+        // A read stream rather than `fs.open`: fs-extra's promise form of `open`
+        // resolves to a bare file descriptor, not a FileHandle, so `handle.read` and
+        // `handle.close` do not exist on it. That was not caught here because the
+        // catch below turned it into a debug line - which is precisely why the first
+        // live run renamed nothing and still looked healthy.
+        const head = await new Promise((resolve, reject) => {
+            const chunks = [];
+            const stream = fs.createReadStream(filePath, { start: 0, end: IMAGE_HEADER_BYTES - 1 });
+            stream.on('data', (c) => chunks.push(c));
+            stream.on('end', () => resolve(Buffer.concat(chunks)));
+            stream.on('error', reject);
+        });
+
+        const ext = imageExtensionFromBytes(head);
+        // `png` means the sniffer confirmed what we already wrote; renaming to the
+        // name a file already has would be noise in the log and in the git diff.
+        return ext && ext !== 'png' ? ext : null;
+    } catch (e) {
+        // A file that cannot be read back is not a reason to fail an export over a
+        // filename - an unreadable one keeps the .png it was written with.
+        logger.debug(`Could not identify the format of ${path.basename(filePath)}: ${String(e.message).split('\n')[0]}`);
+        return null;
+    }
+}
+
 /**
  * Walks a section and everything under it, writing Markdown as it goes.
  *
@@ -961,17 +1002,36 @@ async function processSections(ctx) {
 
                     // 1. Process Images (including Printouts)
                     for (const imgInfo of content.images || []) {
-                        const finalBaseName = `${sanitizedNoteName}_img_${assetCounter++}`;
-                        const imgPath = path.join(assetDir, `${finalBaseName}.png`);
+                        const base = `${sanitizedNoteName}_img_${assetCounter++}`;
+                        // Written as .png first, then renamed below if the bytes say
+                        // otherwise. F-49: it used to stay .png whatever it was, so a
+                        // GIF in a note became a file called `…_img_1.png` holding GIF
+                        // data - an extension that lies to anything that trusts it.
+                        let written = path.join(assetDir, `${base}.png`);
 
-                        updatedHtml = updatedHtml.replace(new RegExp(`data-local-src="${imgInfo.id}"`, 'g'), `data-local-src="${finalBaseName}"`);
+                        updatedHtml = updatedHtml.replace(new RegExp(`data-local-src="${imgInfo.id}"`, 'g'), `data-local-src="${base}"`);
 
-                        const success = await downloadResource(frame.page(), imgInfo.src, imgPath);
+                        const success = await downloadResource(frame.page(), imgInfo.src, written);
                         if (success) {
+                            // Sniffed from the bytes on disk rather than the URL or the
+                            // response header: a OneNote image usually arrives through
+                            // getimage.ashx, which names no format at all.
+                            const real = await realImageExtension(written);
+                            if (real) {
+                                const renamed = path.join(assetDir, `${base}.${real}`);
+                                await fs.move(written, renamed, { overwrite: true });
+                                written = renamed;
+                                // The embed has to carry the extension too, or the note
+                                // links a name the file does not have.
+                                updatedHtml = updatedHtml.replace(
+                                    new RegExp(`data-local-src="${base}"`, 'g'),
+                                    `data-local-src="${base}.${real}"`
+                                );
+                            }
                             savedResources++;
-                            logger.debug(`[Asset] Saved IMAGE to: ${path.relative(process.cwd(), imgPath)}`);
+                            logger.debug(`[Asset] Saved IMAGE to: ${path.relative(process.cwd(), written)}`);
                         } else {
-                            failedAssets.push(`assets/${finalBaseName}.png`);
+                            failedAssets.push(`assets/${base}.png`);
                         }
                     }
 
@@ -1541,5 +1601,9 @@ module.exports = {
     renderFailedAssetNotice,
     // Exported for tests: the exit code a finished run reports. Pure, so the
     // decision can be tested without a browser or a real notebook.
+    // Exported for tests: the file-level half of the format sniffer, which is the
+    // half that can silently do nothing - reading the bytes back off disk is a
+    // different failure from comparing them.
+    realImageExtensionForTest: realImageExtension,
     exitCodeForStats,
 };

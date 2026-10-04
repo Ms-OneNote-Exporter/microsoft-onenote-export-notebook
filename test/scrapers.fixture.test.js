@@ -422,20 +422,20 @@ describe('scrapers against captured fixtures', () => {
             // assets/ with nothing pointing at it, which is F-63's failure reached a
             // different way. The assertion is on the markdown, not the HTML, because
             // "the id is present" passes with the embed missing.
-            const embeds = markdown.match(/!\[\[assets\/img_\d+\.png\]\]/g) || [];
+            const embeds = markdown.match(/!\[\[assets\/img_\d+\.png(?:\|[^\]]*)?\]\]/g) || [];
             expect(embeds).toHaveLength(2);
         });
 
         itBrowser('places it between the paragraphs that say where it belongs', async () => {
             const below = markdown.indexOf('Picture Below');
             const above = markdown.indexOf('Pic above');
-            const embedAt = markdown.search(/!\[\[assets\/img_\d+\.png\]\]/);
+            const embedAt = markdown.search(/!\[\[assets\/img_\d+\.png(?:\|[^\]]*)?\]\]/);
             expect(below).toBeGreaterThan(-1);
             expect(above).toBeGreaterThan(below);
             // The floating picture sorts between them (top 233); the inline one is
             // earlier (top 190), so the FIRST embed is the inline picture and the
             // floating one must come after it and still before "Pic above".
-            const embeds = [...markdown.matchAll(/!\[\[assets\/(img_\d+)\.png\]\]/g)].map((m) => m.index);
+            const embeds = [...markdown.matchAll(/!\[\[assets\/img_\d+\.png(?:\|[^\]]*)?\]\]/g)].map((m) => m.index);
             expect(embeds).toHaveLength(2);
             expect(embeds[0]).toBeGreaterThan(below);
             expect(embeds[1]).toBeGreaterThan(embeds[0]);
@@ -496,7 +496,8 @@ describe('scrapers against captured fixtures', () => {
             // Without this, "skip every image inside a chip" and "skip every image"
             // are indistinguishable, and the second one loses the user's notes.
             expect(content.images[0].src).toContain('getimage.ashx');
-            expect(markdown).toContain('![[assets/img_0.png]]');
+            // F-27: the alt the author wrote rides along with the embed.
+            expect(markdown).toContain('![[assets/img_0.png|a real picture]]');
         });
 
         itBrowser('does not spend an image id on the icon', async () => {

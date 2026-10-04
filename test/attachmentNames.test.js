@@ -231,6 +231,63 @@ describe('picking a name from the visible attributes', () => {
     });
 });
 
+describe('naming an image from its own bytes (F-49)', () => {
+    const { imageExtensionFromBytes } = require('../src/attachmentNames');
+
+    /** Enough of a real file header for the sniffer to go on. */
+    const header = (hex, ascii, offset = 0) => {
+        const b = Buffer.alloc(offset + 16);
+        if (hex) Buffer.from(hex, 'hex').copy(b, offset);
+        if (ascii) b.write(ascii, offset, 'latin1');
+        return b;
+    };
+
+    it('recognises the formats OneNote actually stores', () => {
+        // Measured on the real notebook: a pasted PNG and an attached GIF both arrive,
+        // and the GIF was being written with a .png name.
+        expect(imageExtensionFromBytes(header('89504e470d0a1a0a', null))).toBe('png');
+        expect(imageExtensionFromBytes(header('ffd8ffe0', null))).toBe('jpg');
+        expect(imageExtensionFromBytes(header(null, 'GIF89a'))).toBe('gif');
+        expect(imageExtensionFromBytes(header('424d', null))).toBe('bmp');
+    });
+
+    it('looks past the RIFF header for a WEBP, and past it for an ISO brand', () => {
+        // Both formats announce themselves at an offset, which is the case a naive
+        // "compare the first bytes" check gets wrong.
+        const webp = Buffer.alloc(12);
+        webp.write('RIFF', 0, 'latin1');
+        webp.write('WEBP', 8, 'latin1');
+        expect(imageExtensionFromBytes(webp)).toBe('webp');
+
+        const avif = Buffer.alloc(12);
+        avif.write('ftypavif', 4, 'latin1');
+        expect(imageExtensionFromBytes(avif)).toBe('avif');
+    });
+
+    it('reads SVG, which is text and so has no signature', () => {
+        expect(imageExtensionFromBytes(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')))
+            .toBe('svg');
+        expect(imageExtensionFromBytes(
+            Buffer.from('<?xml version="1.0"?>\n<svg width="10"></svg>'))).toBe('svg');
+    });
+
+    // The important negative: an unrecognised image must keep the .png it already had.
+    // Guessing wrong would rename the file to something that does not describe it.
+    it('answers null for anything it does not recognise', () => {
+        expect(imageExtensionFromBytes(Buffer.from('not an image at all'))).toBeNull();
+        expect(imageExtensionFromBytes(Buffer.from([0x00, 0x01]))).toBeNull();
+        expect(imageExtensionFromBytes(Buffer.alloc(0))).toBeNull();
+        expect(imageExtensionFromBytes(null)).toBeNull();
+        expect(imageExtensionFromBytes('GIF89a')).toBeNull();
+    });
+
+    it('does not mistake a short file for an image', () => {
+        // `bytes.length < 4` guards against indexing past the end, which would throw
+        // rather than answer.
+        expect(() => imageExtensionFromBytes(Buffer.from([0x89, 0x50]))).not.toThrow();
+    });
+});
+
 describe('the list is defined once', () => {
     const fs = require('fs-extra');
     const path = require('path');

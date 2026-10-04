@@ -151,6 +151,64 @@ describe('newStats', () => {
     });
 });
 
+describe('renaming an image to the format it really is (F-49)', () => {
+    // The half of the format sniffer that reads bytes back off disk, against real
+    // files.
+    //
+    // It is here because the first version of this did nothing and looked perfectly
+    // healthy: it used `fs.open`, whose fs-extra promise form resolves to a bare file
+    // descriptor rather than a FileHandle, so `handle.read` was undefined - and the
+    // deliberate `catch` around it turned that into a debug line. Every image kept
+    // its `.png` name, the export reported success, and the only trace was one debug
+    // line per image in a log nobody reads at default level.
+    //
+    // "Never throws" is right for a filename. "Silently does nothing" is not, and
+    // that is what a test is for.
+    const fs = require('fs-extra');
+    const os = require('os');
+    const path = require('path');
+    const exporter = require('../src/exporter');
+    const realExtension = exporter.realImageExtensionForTest;
+
+    let dir;
+
+    beforeEach(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'imgfmt-'));
+    });
+
+    afterEach(() => {
+        fs.removeSync(dir);
+    });
+
+    const write = (name, hex) => {
+        const p = path.join(dir, name);
+        fs.writeFileSync(p, Buffer.from(hex, 'hex'));
+        return p;
+    };
+
+    it('names a GIF gif, however the file was called', async () => {
+        // The case from the real notebook: a GIF written as `…_img_1.png`.
+        expect(await realExtension(write('claimed.png', '474946383961f201f20170000021f904'))).toBe('gif');
+    });
+
+    it('names a JPEG jpg and a WEBP webp', async () => {
+        expect(await realExtension(write('a.png', 'ffd8ffe000104a464946'))).toBe('jpg');
+        expect(await realExtension(write('b.png', '524946460000000057454250'))).toBe('webp');
+    });
+
+    it('answers null for a real PNG, so nothing is renamed to the name it has', async () => {
+        expect(await realExtension(write('c.png', '89504e470d0a1a0a'))).toBeNull();
+    });
+
+    it('answers null for an unrecognised file rather than guessing', async () => {
+        expect(await realExtension(write('d.png', '0001020304050607'))).toBeNull();
+    });
+
+    it('answers null for a file that is not there, without failing the export', async () => {
+        expect(await realExtension(path.join(dir, 'missing.png'))).toBeNull();
+    });
+});
+
 describe('the exit code a finished export reports', () => {
     // F-01, residual. The original finding was that `runExport` swallowed every
     // error and a failed export exited 0. That was fixed. What was left is the

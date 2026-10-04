@@ -38,6 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Image files are named after the format they actually are.** Every image used to be
+  written `.png` whatever it was, so a GIF in a note became a file called
+  `attachment_pic-GIF_img_1.png` holding GIF data — an extension that lies to anything
+  trusting it. The name now follows the image's own bytes, and the embed in your note
+  follows the rename. An unrecognised format keeps the `.png` rather than being renamed
+  to a guess.
+
+  ⚠️ **Image filenames can change.** If you script anything over your export folder, or
+  reference these files from another note, check it first. The notes themselves are
+  otherwise unaffected.
+
+- **Image alt text is kept.** `![[assets/x.png|alt]]` now round-trips, so a note full of
+  images no longer loses every caption and every accessibility label the author wrote.
+  A literal `|` in a caption is escaped, since that is Obsidian's own delimiter.
+
 - **The `diagnose-*` scripts take their arguments through `commander` now.** Both ship in
   the package and both hand-rolled `process.argv`, which had two consequences worth
   knowing about: a flag given without its value was read as `undefined` and failed later
