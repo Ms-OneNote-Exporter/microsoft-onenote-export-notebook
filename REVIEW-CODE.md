@@ -1046,6 +1046,9 @@ The list is replaced rather than accumulated, because "what this review still ow
 only useful version of this section, and the previous list scheduled F-44/F-45/F-46,
 F-36/F-37, F-32, F-23 and F-40/F-48 — all shipped.
 
+**Tracked as issues**, so the list and the tracker cannot quietly disagree:
+F-73 [#37](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/37) · F-18 [#53](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/53) · F-19 [#54](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/54) · F-28 [#55](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/55) · F-54 [#56](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/56) · F-68 [#57](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/57) · the listing-page leak [#58](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/58) · `linkResolver`'s cost half [#59](https://github.com/Ms-OneNote-Exporter/microsoft-onenote-export-notebook/issues/59)
+
 1. **F-73 — an untitled page named something else is still refused.** The only open
    Medium. Now that both obvious answers are settled by measurement: the canvas carries
    no page identity at all, and the page list's selected-row marker moves ~1.25s before
