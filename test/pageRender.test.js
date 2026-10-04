@@ -152,6 +152,56 @@ describe('the wait replaced the sleep', () => {
         expect(state.imagesReady).toBe(2);
     });
 
+    it('does not call a page settled while a picture has not even started arriving', async () => {
+        // The residual F-61 left, and the case the test above cannot see.
+        //
+        // There, the image count *changed* between polls, so the quiescence check
+        // caught it. Here the picture has not started loading at all, so every
+        // reading is byte-identical - and "identical" was read as "finished". That
+        // is a pasted image whose 1.9 MB base64 source had not been decoded yet, and
+        // the page was scraped with an <img> that had no src: measured over seven
+        // runs of one notebook, the source was present in four and absent in three,
+        // and the picture was exported in none of them.
+        const readings = [
+            { outlines: 5, titles: ['Picture in'], images: 25, imagesReady: 24 },
+            // Two identical readings: the old check returned here, with the picture
+            // still unloaded, having asked nothing about the numbers themselves.
+            { outlines: 5, titles: ['Picture in'], images: 25, imagesReady: 24 },
+            { outlines: 5, titles: ['Picture in'], images: 25, imagesReady: 24 },
+            { outlines: 5, titles: ['Picture in'], images: 25, imagesReady: 25 },
+            { outlines: 5, titles: ['Picture in'], images: 25, imagesReady: 25 },
+        ];
+        let i = 0;
+        const frame = {
+            evaluate: jest.fn(async () => readings[Math.min(i++, readings.length - 1)]),
+            waitForTimeout: jest.fn(async () => { }),
+        };
+
+        const state = await waitForPageContent(frame, 'Picture in');
+
+        expect(state.imagesReady).toBe(25);
+        // It waited for the picture, not for the readings to stop moving.
+        expect(frame.evaluate).toHaveBeenCalledTimes(5);
+    });
+
+    it('still gives up on a picture that never arrives, rather than hanging', async () => {
+        // The honest cost of the rule above: a notebook with an image that never
+        // gets a source would now wait out the deadline on every page carrying it.
+        // Bounded, not a hang - and worth pinning, because the alternative failure
+        // is an export that never finishes.
+        const frame = {
+            evaluate: jest.fn(async () => (
+                { outlines: 3, titles: ['The Page'], images: 2, imagesReady: 1 }
+            )),
+            waitForTimeout: jest.fn(async () => { }),
+        };
+
+        const state = await waitForPageContent(frame, 'The Page', 0);
+
+        expect(state.imagesReady).toBe(1);
+        expect(frame.evaluate).toHaveBeenCalledTimes(1);
+    });
+
     it('does not wait a second poll for a page that is already finished', async () => {
         // The cost of the quiescence check, pinned so it cannot creep up: a page
         // that is correct and unchanged takes one extra 250ms poll and no more.

@@ -377,6 +377,73 @@ describe('scrapers against captured fixtures', () => {
         });
     });
 
+    describe('a picture drawn outside every outline (F-72)', () => {
+        /**
+         * The same shape as F-69, with the other content type — and it survived that
+         * fix because that fix named one container and not the other.
+         *
+         * OneNote names its two out-of-outline containers alike: `WACEFContainer`
+         * for a file chip, `WACImageContainer` for a pasted picture. F-69 adopted the
+         * first; the image loop still walked `outlines`, so the second was
+         * unreachable twice over — not collected, and with no clone in the note body
+         * its id would have had nowhere to land even if it had been.
+         *
+         * On the page this came from, 7 of 25 images were inside an outline and the
+         * picture was not one of them. In two separate runs its 1.9 MB base64 source
+         * was in the DOM, fully decoded, while the export reported
+         * `Saved (0 assets)`.
+         *
+         * The fixture also holds a picture *inside* an outline, because collecting
+         * the floating one must not come at the cost of the ordinary path.
+         */
+        const { createMarkdownConverter } = require('../src/parser');
+
+        let content;
+        let markdown;
+
+        beforeAll(async () => {
+            await loadFixture('image-outside-outline.html');
+            content = await getPageContent(page);
+            markdown = createMarkdownConverter().turndown(content.contentHtml);
+        });
+
+        itBrowser('collects the floating picture', async () => {
+            const sources = content.images.map((i) => i.src);
+            expect(sources.some((s) => s.startsWith('data:image/gif'))).toBe(true);
+        });
+
+        itBrowser('still collects a picture inside an outline', async () => {
+            expect(content.images.some((i) => i.src.includes('getimage.ashx'))).toBe(true);
+            expect(content.images).toHaveLength(2);
+        });
+
+        itBrowser('embeds it in the note, which needs a clone to attach the id to', async () => {
+            // The half a careless fix misses: collect the image and the file lands in
+            // assets/ with nothing pointing at it, which is F-63's failure reached a
+            // different way. The assertion is on the markdown, not the HTML, because
+            // "the id is present" passes with the embed missing.
+            const embeds = markdown.match(/!\[\[assets\/img_\d+\.png\]\]/g) || [];
+            expect(embeds).toHaveLength(2);
+        });
+
+        itBrowser('places it between the paragraphs that say where it belongs', async () => {
+            const below = markdown.indexOf('Picture Below');
+            const above = markdown.indexOf('Pic above');
+            const embedAt = markdown.search(/!\[\[assets\/img_\d+\.png\]\]/);
+            expect(below).toBeGreaterThan(-1);
+            expect(above).toBeGreaterThan(below);
+            // The floating picture sorts between them (top 233); the inline one is
+            // earlier (top 190), so the FIRST embed is the inline picture and the
+            // floating one must come after it and still before "Pic above".
+            const embeds = [...markdown.matchAll(/!\[\[assets\/(img_\d+)\.png\]\]/g)].map((m) => m.index);
+            expect(embeds).toHaveLength(2);
+            expect(embeds[0]).toBeGreaterThan(below);
+            expect(embeds[1]).toBeGreaterThan(embeds[0]);
+            expect(embeds[1]).toBeLessThan(above);
+            expect(embedAt).toBeGreaterThan(-1);
+        });
+    });
+
     describe("a file chip's icon is not a page image (F-71)", () => {
         /**
          * The chip was scraped twice: once correctly as the attachment, and once as

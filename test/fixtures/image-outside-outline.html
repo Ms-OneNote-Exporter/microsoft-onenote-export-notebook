@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<!--
+  Fixture: a pasted picture drawn outside every outline, as captured in
+  logs/dumps/2026-10-04_06h58/debug_page_Picture in.html and de-identified like
+  the other fixtures.
+
+  This is the F-72 shape, and it is the same shape as F-69's with the other
+  content type. OneNote names its two out-of-outline containers alike:
+
+      div#PageContentContainer
+        div.OutlineContainer                  <- the text
+        div.WACImageContainer[absolute]       <- the picture, no outline above it
+          img.WACImage
+        div.OutlineContainer                  <- more text
+
+  and the F-69 fix adopted `.WACEFContainer` and left `.WACImageContainer`
+  alone. On the page this came from, 7 of its 25 images were inside an outline
+  and the picture was not one of them - so the image loop, which walked
+  `outlines`, never saw it. In two separate runs its 1.9 MB base64 source was
+  sitting in the DOM, fully decoded, while the export reported `Saved (0
+  assets)`.
+
+  Two things are being pinned here, and they are independent defects:
+
+    1. the picture must be *collected*, and its id must land on a clone in the
+       note body - an image collected with no clone to attach to would download
+       to assets/ while the note stopped referring to it (F-63's failure with a
+       different cause);
+    2. the picture must be *ordered* by the same rule as everything else, which
+       is what puts it between the two paragraphs that say where it belongs.
+
+  The OneNote UI furniture that also lives outside the outlines is deliberately
+  NOT modelled as a content container: on the real page, everything else out
+  there is an upsell button, a colour block and a task-pane close button, and a
+  rule of "any element outside an outline holding an image" would export those.
+  The last outline therefore holds a picture inside it, so the fixture also
+  proves the in-outline path still works.
+
+  Offline and inert: the picture is a small data: URL rather than the 1.9 MB
+  base64 the real note carries, for the same reason the other fixtures
+  substitute - the size is not what is being tested, and a committed fixture
+  must not carry a megabyte.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>image outside an outline fixture</title>
+<style>
+  /* Real dimensions and positions. getPageContent orders the body by
+     getBoundingClientRect, so the coordinates are the point of the fixture. */
+  body { margin: 0; }
+  #OreoCanvas { display: block; width: 800px; height: 600px; position: relative; }
+  #PageContentContainer { position: relative; display: block; width: 800px; height: 600px; }
+
+  .OutlineContainer { position: absolute; width: 600px; left: 41px; }
+  .Outline { background: transparent; }
+  .oc-title  { top: 67px; }
+  .oc-below  { top: 149px; }
+  .oc-inside { top: 190px; }
+  .oc-above  { top: 634px; }
+
+  .WACImageContainer { position: absolute; left: 156px; top: 233px; width: 480px; height: 335px; }
+  .WACImage { width: 480px; height: 335px; }
+  img.realcontent { display: block; width: 700px; height: 700px; }
+</style>
+</head>
+<body>
+
+  <div id="OreoCanvas" class="canvasContainer">
+    <div id="PageContentContainer" class="PageContentContainer">
+
+      <div class="OutlineContainer oc-title">
+        <div class="TitleOutline">Picture In</div>
+      </div>
+
+      <div class="OutlineContainer oc-below">
+        <div class="Outline"><div class="OutlineContent">
+          <p class="Paragraph">Picture Below</p>
+        </div></div>
+      </div>
+
+      <!--
+        THE F-72 CASE: a pasted picture, absolutely positioned beside the outlines
+        rather than inside one. It must be collected, embedded in the note, and
+        placed between the two paragraphs that name its position.
+      -->
+      <div class="WACImageContainer" role="presentation" tabindex="0" aria-label="Picture">
+        <span class="WACImageOverlay"></span>
+        <span id="alt" class="WACAltTextDescribedBy" aria-hidden="true"></span>
+        <img class="WACImage" role="presentation" alt="a pasted picture"
+             src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </div>
+
+      <!-- THE CASE THAT MUST NOT BE SWEPT UP: a picture inside an outline. -->
+      <div class="OutlineContainer oc-inside">
+        <div class="Outline"><div class="OutlineContent">
+          <p class="Paragraph">And a picture in a normal outline:</p>
+          <img class="wacimage realcontent" role="presentation" alt="an inline picture"
+               src="https://res.public.example-cdn.invalid/officeonline/getimage.ashx?id=2">
+        </div></div>
+      </div>
+
+      <div class="OutlineContainer oc-above">
+        <div class="Outline"><div class="OutlineContent">
+          <p class="Paragraph">Pic above</p>
+        </div></div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

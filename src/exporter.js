@@ -319,11 +319,33 @@ async function waitForPageContent(contentFrame, expectedTitle, timeoutMs = 15000
         state = await readCanvasState(contentFrame);
         const signature = canvasSignature(state);
 
-        // Two conditions, and the second is what catches a page that is still
-        // loading its images: the right page has to be on screen AND nothing about
-        // it may have changed since the previous reading. A page that is already
-        // finished therefore costs exactly one extra poll.
-        if (isRequestedPageOnScreen(state, expectedTitle) && signature === lastSignature) {
+        // F-72, the residual F-61 left: "nothing has changed" is not the same as
+        // "finished", and on a page whose only outstanding work is a picture it is
+        // demonstrably the wrong test.
+        //
+        // readCanvasState counts images and images-with-a-source, and its own
+        // comment says the second number "is what tells the caller the page is
+        // still filling in" - but the caller never asked. It compared signatures
+        // and returned on the first pair that matched, so a pasted picture whose
+        // 1.9 MB base64 source had not been decoded yet looked identical twice in a
+        // row and the page was declared settled. Measured over seven runs of one
+        // notebook: the source was present in four of them and absent in three, and
+        // the page exported with no picture in all seven.
+        //
+        // Requiring the count to match is bounded by the same deadline as
+        // everything else here, so a page that can never satisfy it costs the
+        // timeout rather than hanging - and no other page in that notebook has an
+        // image without a source, so nothing else paid for it.
+        const pictureStillArriving = state.images > state.imagesReady;
+
+        // Three conditions, and the last two are what catch a page that is still
+        // loading its images: the right page has to be on screen, no picture may be
+        // mid-flight, and nothing about it may have changed since the previous
+        // reading. A page that is already finished therefore costs exactly one
+        // extra poll.
+        if (isRequestedPageOnScreen(state, expectedTitle) &&
+            !pictureStillArriving &&
+            signature === lastSignature) {
             return state;
         }
 
