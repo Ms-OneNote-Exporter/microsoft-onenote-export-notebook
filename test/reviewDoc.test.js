@@ -245,7 +245,11 @@ describe('the standing table agrees with the register', () => {
         for (const id of partials) {
             expect(standingSection).toContain(id);
         }
-        for (const id of ['F-23', 'F-33', 'F-38']) {
+        // The two long-standing partials are still named explicitly, so a deletion is
+        // still caught. F-38 used to be in this list and left it when its residual
+        // closed - which is the list doing its job, and also why it is derived rather
+        // than hardcoded.
+        for (const id of ['F-23', 'F-33']) {
             expect(standingSection).toContain(id);
         }
     });

@@ -205,19 +205,78 @@ describe('log file hygiene', () => {
         }
     });
 
-    it('tightens a pre-existing world-readable log file', async () => {
+    it('tightens a pre-existing world-readable log file before its first write', async () => {
         // A log written by an earlier version is still 0644, and appendFileSync's
-        // `mode` option only applies at creation - so without a startup chmod the
-        // old exposure would persist forever.
+        // `mode` option only applies at creation - so without a chmod the old
+        // exposure would persist forever.
+        //
+        // What matters is that the exposure is closed before anything is appended,
+        // not *when* the chmod happens. It used to happen at require time, which is
+        // also the one moment it could not happen at all: on a read-only or full
+        // disk the constructor threw, so merely importing a module took the export
+        // down with it (F-38).
         const { logger } = freshLogger();
         fs.writeFileSync(logger.logFilePath, 'old content\n', { mode: 0o644 });
         expect(fs.statSync(logger.logFilePath).mode & 0o077).toBeGreaterThan(0);
 
         jest.resetModules();
-        require('../src/utils/logger');
+        const lazy = require('../src/utils/logger');
+
+        // Requiring alone touches nothing - that is the fix.
+        if (process.platform !== 'win32') {
+            expect(fs.statSync(logger.logFilePath).mode & 0o077).toBeGreaterThan(0);
+        }
+
+        await lazy.info('first line');
 
         if (process.platform !== 'win32') {
             expect(fs.statSync(logger.logFilePath).mode & 0o777).toBe(0o600);
+        }
+    });
+
+    it('lets a property installed on the logger be read back unchanged', () => {
+    // The lazy Proxy binds methods so they survive being pulled off the object,
+    // and the guard for that is subtle: an installed property shadows the prototype
+    // without removing it, so `name in Logger.prototype` is still true for a
+    // patched `warn`. Binding it handed back `bound mockConstructor` with no
+    // `.mock` on it, and jest.spyOn() silently stopped working - which broke a test
+    // file that had nothing to do with the logger.
+    const { logger } = freshLogger();
+    const before = logger.warn;
+
+    expect(typeof before).toBe('function');
+    expect(before._isMockFunction).toBeUndefined();
+
+    const spy = jest.spyOn(logger, 'warn');
+    try {
+        expect(spy._isMockFunction).toBe(true);
+        expect(logger.warn._isMockFunction).toBe(true);
+    } finally {
+        spy.mockRestore();
+    }
+});
+
+it('creates no directory and no log file merely by being imported (F-38)', () => {
+        // Seven modules import the logger, and an import is not a reason to fail.
+        // On a read-only filesystem the old constructor threw here, before main()
+        // could report anything at all.
+        const dir = path.join(os.tmpdir(), `logger-lazy-${process.pid}`);
+        process.env.ONENOTE_EXPORT_LOG_DIR = dir;
+
+        try {
+            jest.resetModules();
+            require('../src/utils/logger');
+
+            expect(fs.existsSync(dir)).toBe(false);
+
+            // ...and the exported constants are still readable without paying for it.
+            const logger = require('../src/utils/logger');
+            expect(logger.LEVELS).toBeDefined();
+            expect(logger.LoggerClass).toBeDefined();
+            expect(fs.existsSync(dir)).toBe(false);
+        } finally {
+            delete process.env.ONENOTE_EXPORT_LOG_DIR;
+            fs.rmSync(dir, { recursive: true, force: true });
         }
     });
 
