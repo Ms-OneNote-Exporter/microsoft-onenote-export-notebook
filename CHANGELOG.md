@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not a failure: it tends to fail when something has already gone wrong, and a
   debugging aid must not be the thing that loses the export.
 
+
+- **`--verbose` now prints the canvas timeline while a page is waited for.** One line per
+  poll, showing the outline count, how many images have arrived, the titles on the
+  canvas and which page-list row OneNote has selected. This is what settled a question
+  a static dump could not: whether the page list's "selected" marker could stand in for
+  a page's title. It cannot — it moves about a second before the canvas does — and the
+  timeline above is what shows that. Debug level only, so a normal run is unaffected.
+
 ### Changed
 
 - **A page that fails to settle now leaves its canvas behind** (with `--dodump`). The dump
