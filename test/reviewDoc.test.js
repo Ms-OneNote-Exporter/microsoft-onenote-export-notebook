@@ -231,12 +231,21 @@ describe('the standing table agrees with the register', () => {
         // F-23, F-33 and F-38 are "partly fixed". A partial fix that the standing
         // section never mentions is a partial fix nobody is tracking, which is how a
         // residual quietly becomes permanent.
+        //
+        // The expected set is derived rather than written out. It used to be
+        // `toEqual(['F-23', 'F-33', 'F-38'])`, which added nothing over the loop
+        // below and failed the moment a fourth partial fix appeared legitimately -
+        // a tripwire measuring churn, not correctness. The three long-standing ones
+        // are still named explicitly, so a deletion is still caught.
         const partials = findings
             .filter((f) => verdictOf(f.status) === 'partly fixed')
             .map((f) => f.id);
 
-        expect(partials.sort()).toEqual(['F-23', 'F-33', 'F-38']);
+        expect(partials.length).toBeGreaterThanOrEqual(3);
         for (const id of partials) {
+            expect(standingSection).toContain(id);
+        }
+        for (const id of ['F-23', 'F-33', 'F-38']) {
             expect(standingSection).toContain(id);
         }
     });

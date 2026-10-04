@@ -310,6 +310,46 @@ describe('the wait replaced the sleep', () => {
             expect(isRequestedPageOnScreen(
                 { outlines: 0, titles: ['Some Page'] }, 'Some Page')).toBe(false);
         });
+
+        // ---------------------------------------------------------------------
+        // F-67: OneNote does not leave the title *out* for an untitled page, it
+        // leaves it *empty*, so `titles` is ['']. That fell through to the name
+        // comparison, was measured against 'Untitled Page', never matched, and the
+        // page was thrown away on every run.
+        // ---------------------------------------------------------------------
+        it('accepts a genuinely untitled page, whose canvas title is empty', () => {
+            // Live, on a page with a date and nothing else:
+            //   Error: the page never settled on the canvas in OneNote, so nothing
+            //   was written for it. The canvas is showing "" instead.
+            expect(isRequestedPageOnScreen(
+                { outlines: 2, titles: [''] }, 'Untitled Page')).toBe(true);
+        });
+
+        it('accepts it whatever the language OneNote is running in', () => {
+            // The label list is bounded and cannot be complete - F-33's argument -
+            // so this pins the languages it does claim rather than implying coverage.
+            for (const label of ['Page sans titre', 'Neue Seite', 'Pagina senza titolo', 'Nueva página']) {
+                expect(isRequestedPageOnScreen(
+                    { outlines: 2, titles: [''] }, label)).toBe(true);
+            }
+        });
+
+        it('still verifies a page the author NAMED "Untitled Page" by name', () => {
+            // The case that makes this a narrow fix rather than a broad one. A
+            // notebook can hold a page deliberately titled "Untitled Page" - title
+            // on the canvas, text under it - beside a genuinely untitled one in
+            // another section. So the name proves nothing about which kind of page
+            // this is, and an empty title on screen must not stand in for a titled
+            // request.
+            expect(isRequestedPageOnScreen(
+                { outlines: 2, titles: [''] }, 'Picture in')).toBe(false);
+
+            // ...while the titled page itself still matches, by name, as it always
+            // did. Both pages carry the same name, so this is the pair that a rule
+            // keyed on the name alone would confuse.
+            expect(isRequestedPageOnScreen(
+                { outlines: 3, titles: ['Untitled Page'] }, 'Untitled Page')).toBe(true);
+        });
     });
 });
 
