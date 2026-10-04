@@ -947,6 +947,31 @@ async function processSections(ctx) {
                 }
 
                 if (!isRequestedPageOnScreen(state, pageInfo.name)) {
+                    // Dump the canvas *before* refusing, because this is the one moment
+                    // the DOM is guaranteed to be interesting and the code was throwing
+                    // straight past it.
+                    //
+                    // F-76. A page that never settles produced no dump at all: the dump
+                    // below happens only once the page has settled, so the failure path
+                    // had nothing to show. The error text says what the canvas title was
+                    // and that is genuinely all it could say - the whole page was right
+                    // there in the DOM and was not written down.
+                    //
+                    // That is why F-67 and F-73 both needed someone at a keyboard. F-67
+                    // ("the canvas is showing "" instead") was fixable from one error
+                    // line; the rest of it - is there an id on the canvas that identifies
+                    // the page? what else is in that markup? - was not, because the
+                    // markup was never captured.
+                    //
+                    // Named apart from the success-path dump so the two cannot overwrite
+                    // each other, which is F-68's failure and would be an especially
+                    // cruel one here: the diagnostic would replace the good capture.
+                    await writeDebugDump(
+                        frame,
+                        `debug_page_${safeName(pageInfo.name, 'page')}_UNSETTLED`,
+                        options
+                    );
+
                     // Refuse to write it. The alternative - the fallback in
                     // getPageContent - writes a landmark's accessible name and
                     // calls it a page, and there is no way for the user to tell
