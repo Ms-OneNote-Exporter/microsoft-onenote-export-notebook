@@ -22,7 +22,7 @@ jest.mock('../src/utils/logger', () => ({
 }));
 
 const logger = require('../src/utils/logger');
-const { reportSummary, newStats } = require('../src/exporter');
+const { reportSummary, newStats, exitCodeForStats: exportCodeFor } = require('../src/exporter');
 
 /** All text the logger was asked to print, flattened. */
 const said = () => [].concat(
@@ -38,6 +38,32 @@ describe('reportSummary', () => {
         expect(logger.success).toHaveBeenCalledWith('Export complete!');
         expect(logger.warn).not.toHaveBeenCalled();
         expect(said()).toContain('Total Pages: 0');
+    });
+
+    it('does NOT announce a clean run when the section list was never found (F-77)', () => {
+        // The exact shape of the live failure that produced the finding: every
+        // counter at zero, so nothing here differs from the clean run above except
+        // the flag. It must not be reported as a success, and it must say what is
+        // wrong - an expired sign-in and an error page served instead of the
+        // notebook look identical from inside, and both produce this.
+        const stats = newStats();
+        stats.notebookNotFound = true;
+        reportSummary(stats, null, '/out/NB');
+
+        expect(logger.success).not.toHaveBeenCalled();
+        // The headline goes through `error`, not `warn`: this is a failed run, and
+        // `said()` reads as everything the user was *told*, so it deliberately
+        // omits `error`. Asserting the channel it actually uses.
+        expect(logger.error).toHaveBeenCalled();
+        expect(String(logger.error.mock.calls[0][0])).toMatch(/Nothing was exported/i);
+        // Says which of the two causes to check, rather than leaving the user to
+        // deduce it from an empty folder.
+        expect(said()).toMatch(/sign-in/i);
+        // And reassures about the thing that actually matters: an existing export
+        // was not overwritten with nothing. Wording is precise - an *empty* notebook
+        // folder is left behind, named after the error page's <title>.
+        expect(said()).toMatch(/No notes or assets were written/i);
+        expect(said()).toMatch(/untouched/i);
     });
 
     it('does NOT announce a clean run when items failed', () => {
@@ -138,10 +164,47 @@ describe('newStats', () => {
     it('starts every counter at zero', () => {
         // Pinned exactly, on purpose: a counter added here and not in the
         // comparison is a counter nothing reports, which is the F-01 shape.
+        //
+        // `notebookNotFound` is listed with the counters because it is reported the
+        // same way - it is read by reportSummary and by exitCodeForStats - even
+        // though it is a flag rather than a tally. F-77.
         expect(newStats()).toEqual({
             totalPages: 0, totalAssets: 0, failedPages: 0, failedSections: 0, failedGroups: 0,
             failedAssets: 0,
+            notebookNotFound: false,
         });
+    });
+
+    // The shape of the bug, and the shape of the fix.
+    //
+    // A run that found no sections has every counter at zero - exactly the shape a
+    // complete export has. So the counters alone *cannot* tell them apart, which is
+    // why there is a flag. This test states that inability rather than papering over
+    // it: if a future change made the counters sufficient, this would fail and the
+    // flag would be redundant.
+    it('the counters alone cannot tell an empty export from a complete one', () => {
+        const exportedNothing = newStats();
+        const exportedEverything = { ...newStats(), totalPages: 24, totalAssets: 9 };
+
+        const comparable = (s) => ({
+            totalPages: s.totalPages, totalAssets: s.totalAssets,
+            failedPages: s.failedPages, failedSections: s.failedSections,
+            failedGroups: s.failedGroups, failedAssets: s.failedAssets,
+        });
+
+        // Every number agrees that both runs succeeded...
+        expect(comparable(exportedNothing).failedPages).toBe(0);
+        expect(exportCodeFor(exportedNothing)).toBe(0);
+        expect(exportCodeFor(exportedEverything)).toBe(0);
+        // ...and the flag is the only thing that does not.
+        expect(exportedNothing.notebookNotFound).toBe(false);
+    });
+
+    it('reports a non-zero exit once the flag says no section list was found', () => {
+        // Code 3, the same one a partial export uses: the run did not finish the job,
+        // and a caller checking "did this fully succeed" should not have to learn a
+        // fourth code.
+        expect(exportCodeFor({ ...newStats(), notebookNotFound: true })).toBe(3);
     });
 
     it('returns a fresh object each time, never a shared default', () => {

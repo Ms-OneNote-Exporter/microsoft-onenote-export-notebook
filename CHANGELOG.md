@@ -97,6 +97,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (Actions → Backfill GitHub Releases) and refuses to release a tag whose version
     is not on npm.
 
+
+- **A run that exports nothing no longer reports success.** If OneNote's section list
+  could not be found at all, the tool used to print `Export complete!` and exit `0` —
+  every counter at zero, indistinguishable from a clean export. Found by accident when
+  an expired sign-in made OneNote serve an error page whose title the tool took for the
+  notebook's name, so the run "succeeded" into a folder called
+  `We couldn't create a passkey`:
+
+  ```
+  [SUCCESS] Export complete!
+  [INFO] Total Pages: 0
+  ```
+
+  That is the worst failure this tool can have: you believe your vault is current, having
+  just written nothing. It now fails with **exit code 3** — the same code a partial export
+  already used, so a script checking for full success needs no change — and says which
+  two causes to check:
+
+  ```
+  [ERROR] Nothing was exported: the section list for this notebook was never found.
+  [WARN]   This is what an expired or refused sign-in looks like, and what a
+  [WARN]   OneNote error page served instead of the notebook looks like.
+  [WARN]   No notes or assets were written, so an existing export is untouched.
+  ```
+
+  An empty notebook and a notebook that never loaded look identical from inside, and
+  neither is a success, so both are reported. Your existing notes are never overwritten.
+
 ### Fixed
 
 - **An attachment OneNote drew outside every outline was never exported at all.**
