@@ -610,8 +610,52 @@ function emptyLookupWarning(parentId, reason) {
         'or the OneNote DOM may have changed.';
 }
 
-async function processSections(contentFrame, outputDir, td, options, pageIdMap, processedItems = new Set(), parentId = null, stats = newStats()) {
-    const { items: sections, reason } = await getSections(contentFrame, parentId);
+/**
+ * Walks a section and everything under it, writing Markdown as it goes.
+ *
+ * Takes one object rather than eight positional parameters. The recursive call used
+ * to read:
+ *
+ *     processSections(contentFrame, groupDir, td, options, pageIdMap,
+ *                     processedItems, item.id, stats)
+ *
+ * in which two adjacent arguments are the same shape, one is the same object as the
+ * line above, and a transposition at the call site would not fail - it would export
+ * something. It now inherits the whole context and names only what changes:
+ *
+ *     processSections({ ...ctx, outputDir: groupDir, parentId: item.id })
+ *
+ * so a field added to the walk is added in one place and the recursion cannot forget
+ * it.
+ *
+ * `stats` and `processedItems` are mutable and shared by every level, and are created
+ * by the caller that starts a run rather than defaulted here. A default would hand
+ * each caller that forgot to pass one its own object, and the summary would report
+ * whichever tally finished last.
+ *
+ * @param {object} ctx
+ * @param {import('playwright').Frame} ctx.frame - The notebook frame
+ * @param {string} ctx.outputDir - Directory this level writes into
+ * @param {ReturnType<createMarkdownConverter>} ctx.converter - Markdown converter
+ * @param {object} ctx.options - Export options
+ * @param {Record<string, {path: string, isDir?: boolean}>} ctx.pageIdMap - Internal link map, mutated
+ * @param {Set<string>} ctx.processedItems - Ids already walked, mutated
+ * @param {string|null} [ctx.parentId] - Group being walked, or null at the top
+ * @param {ReturnType<newStats>} ctx.stats - Run tallies, mutated
+ * @returns {Promise<void>}
+ */
+async function processSections(ctx) {
+    const {
+        frame,
+        outputDir,
+        converter,
+        options,
+        pageIdMap,
+        processedItems,
+        parentId = null,
+        stats
+    } = ctx;
+    const { items: sections, reason } = await getSections(frame, parentId);
     const warning = emptyLookupWarning(parentId, reason);
     if (warning) {
         logger.warn(warning);
@@ -651,17 +695,17 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 //
                 // So: click only while it is collapsed, and re-click only if the
                 // row says it is still collapsed.
-                if (await isGroupExpanded(contentFrame, item.id) !== true) {
-                    await selectSection(contentFrame, item.id);
+                if (await isGroupExpanded(frame, item.id) !== true) {
+                    await selectSection(frame, item.id);
                 }
 
                 logger.info('Waiting for the group to expand...');
-                let groupItems = await waitForGroupItems(contentFrame, item.id);
+                let groupItems = await waitForGroupItems(frame, item.id);
 
-                if (groupItems === 0 && await isGroupExpanded(contentFrame, item.id) === false) {
+                if (groupItems === 0 && await isGroupExpanded(frame, item.id) === false) {
                     logger.warn(`      Group "${item.name}" was still collapsed; expanding it again...`);
-                    await selectSection(contentFrame, item.id);
-                    groupItems = await waitForGroupItems(contentFrame, item.id);
+                    await selectSection(frame, item.id);
+                    groupItems = await waitForGroupItems(frame, item.id);
                 }
 
                 if (groupItems === 0) {
@@ -677,8 +721,12 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                     );
                 }
 
-                await writeDebugDump(contentFrame, `debug_group_${safeName(item.name, 'group')}`, options);
-                await processSections(contentFrame, groupDir, td, options, pageIdMap, processedItems, item.id, stats);
+                await writeDebugDump(frame, `debug_group_${safeName(item.name, 'group')}`, options);
+                await processSections({
+                    ...ctx,
+                    outputDir: groupDir,
+                    parentId: item.id
+                });
                 logger.info(`Returning from group: ${item.name}`);
 
                 // navigateBack() frequently finds no control and returns false -
@@ -689,7 +737,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 // aborted every group on that basis, losing whole subtrees; a real
                 // run (2026-09-28) showed 2 of 2 groups hitting it while still
                 // exporting all 15 pages. So: note it and carry on.
-                const wentBack = await navigateBack(contentFrame);
+                const wentBack = await navigateBack(frame);
                 if (!wentBack) {
                     logger.debug(
                         `No "Back" control found after "${item.name}"; continuing ` +
@@ -698,7 +746,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 }
 
                 logger.info('Will wait 3 seconds to let the frame load properly');
-                await contentFrame.waitForTimeout(3000);
+                await frame.waitForTimeout(3000);
             } catch (e) {
                 // A tab that is gone ends the whole walk. Catching it here would
                 // keep the loop going and produce one "Failed to process group"
@@ -713,7 +761,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
         // Processing regular Section
         try {
-            await selectSection(contentFrame, item.id);
+            await selectSection(frame, item.id);
         } catch (e) {
             // See the group handler above: a dead tab is not one bad section.
             if (e instanceof NotebookUnavailableError) throw e;
@@ -724,16 +772,16 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
         }
 
         logger.info('Will wait 3 seconds to let the section load properly');
-        await contentFrame.waitForTimeout(3000);
+        await frame.waitForTimeout(3000);
 
         // Check for password protection
-        let isLocked = await isSectionLocked(contentFrame);
+        let isLocked = await isSectionLocked(frame);
 
         // If locked, wait another 2s and re-check to avoid transition glitches from previous sections
         if (isLocked) {
             logger.info('Will wait 2 seconds to let the section frame load properly');
-            await contentFrame.waitForTimeout(2000);
-            isLocked = await isSectionLocked(contentFrame);
+            await frame.waitForTimeout(2000);
+            isLocked = await isSectionLocked(frame);
         }
 
         const baseSectionName = safeName(item.name, 'Untitled section');
@@ -774,14 +822,14 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
             await waitForEnter('Press ENTER here once the section is unlocked to continue...');
 
             // Re-verify
-            await contentFrame.waitForTimeout(2000);
-            isLocked = await isSectionLocked(contentFrame);
+            await frame.waitForTimeout(2000);
+            isLocked = await isSectionLocked(frame);
             if (isLocked) {
                 logger.error('Section still appears to be locked. Please try again.');
             }
         }
 
-        const pages = await getPages(contentFrame);
+        const pages = await getPages(frame);
         logger.info(`Found ${pages.length} pages. Starting extraction...`);
 
         // Track used filenames in this section to handle collisions
@@ -831,7 +879,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
             logger.info(`Exporting: ${pageInfo.name} ...`);
 
             try {
-                await selectPage(contentFrame, pageInfo.id);
+                await selectPage(frame, pageInfo.id);
 
                 // Wait for THIS page to be settled on the canvas, not for a number
                 // of seconds to pass (F-61). A fixed sleep is a race, and the page
@@ -846,15 +894,15 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                 // is doubled. Both the title and the absence of a second copy have
                 // to hold.
                 logger.info(`Waiting for "${pageInfo.name}" to settle on the canvas...`);
-                let state = await waitForPageContent(contentFrame, pageInfo.name);
+                let state = await waitForPageContent(frame, pageInfo.name);
 
                 if (!isRequestedPageOnScreen(state, pageInfo.name)) {
                     // The first attempt can lose the race against a page OneNote
                     // is still tearing down. Selecting it again starts the
                     // transition over, which reliably recovers that case.
                     logger.warn(`      "${pageInfo.name}" had not settled; selecting it again...`);
-                    await selectPage(contentFrame, pageInfo.id);
-                    state = await waitForPageContent(contentFrame, pageInfo.name);
+                    await selectPage(frame, pageInfo.id);
+                    state = await waitForPageContent(frame, pageInfo.name);
                 }
 
                 if (!isRequestedPageOnScreen(state, pageInfo.name)) {
@@ -871,9 +919,9 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                     );
                 }
 
-                await writeDebugDump(contentFrame, `debug_page_${safeName(pageInfo.name, 'page')}`, options);
+                await writeDebugDump(frame, `debug_page_${safeName(pageInfo.name, 'page')}`, options);
 
-                const content = await getPageContent(contentFrame);
+                const content = await getPageContent(frame);
 
                 // Belt and braces: the wait above and the scrape are two separate
                 // reads, and a frame can be replaced between them. A scrape that
@@ -918,7 +966,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
 
                         updatedHtml = updatedHtml.replace(new RegExp(`data-local-src="${imgInfo.id}"`, 'g'), `data-local-src="${finalBaseName}"`);
 
-                        const success = await downloadResource(contentFrame.page(), imgInfo.src, imgPath);
+                        const success = await downloadResource(frame.page(), imgInfo.src, imgPath);
                         if (success) {
                             savedResources++;
                             logger.debug(`[Asset] Saved IMAGE to: ${path.relative(process.cwd(), imgPath)}`);
@@ -942,7 +990,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                             `data-local-file="${finalFileName}" data-filename="${finalFileName}"`
                         );
 
-                        const success = await downloadAttachment(contentFrame, attachInfo, filePath);
+                        const success = await downloadAttachment(frame, attachInfo, filePath);
                         if (success) {
                             savedResources++;
                             logger.debug(`[Asset] Saved ATTACHMENT to: ${path.relative(process.cwd(), filePath)}`);
@@ -980,7 +1028,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                             `data-local-video="${finalFileName}"`
                         );
 
-                        const success = await downloadResource(contentFrame.page(), videoInfo.src, filePath);
+                        const success = await downloadResource(frame.page(), videoInfo.src, filePath);
                         if (success) {
                             savedResources++;
                             logger.debug(`[Asset] Saved VIDEO to: ${path.relative(process.cwd(), filePath)}`);
@@ -990,7 +1038,7 @@ async function processSections(contentFrame, outputDir, td, options, pageIdMap, 
                     }
                 }
 
-                const markdown = td.turndown(updatedHtml) + renderFailedAssetNotice(failedAssets);
+                const markdown = converter.turndown(updatedHtml) + renderFailedAssetNotice(failedAssets);
                 const fileName = sanitizedNoteName + '.md';
                 const filePath = path.join(sectionDir, fileName);
 
@@ -1251,7 +1299,22 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
 
     let stopped = null;
     try {
-        await processSections(notebook, outputBase, td, options, pageIdMap, new Set(), null, stats);
+        await processSections({
+            frame: notebook,
+            outputDir: outputBase,
+            converter: td,
+            options,
+            pageIdMap,
+            // Created here rather than defaulted inside the function: `stats` is
+            // mutable and shared by every level of the walk, so the one place that
+            // has to decide whether a run starts with a fresh tally is the one that
+            // starts the run. A `stats = newStats()` default would hand every caller
+            // that forgot to pass one its own object, and the summary would then
+            // report the numbers of whichever call happened to finish last.
+            processedItems: new Set(),
+            parentId: null,
+            stats
+        });
     } catch (e) {
         if (!(e instanceof NotebookUnavailableError)) throw e;
 
