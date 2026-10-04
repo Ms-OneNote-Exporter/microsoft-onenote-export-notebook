@@ -48,6 +48,36 @@ const verdictOf = (status) => {
 
 const isClosed = (v) => v !== null && v !== 'open';
 
+/** Findings named in the "Still open" rows specifically. */
+const stillOpenIds = (() => {
+    const start = doc.indexOf('| Sev | Still open |');
+    if (start === -1) return [];
+    const block = doc.slice(start, doc.indexOf('\n\n', start));
+    return [...new Set(block.match(/F-\d+/g) || [])];
+})();
+
+/**
+ * Findings the standing tables still treat as owed - a wider set than the above.
+ *
+ * Two tables, because the document uses two. The "Still open" table lists the Low and
+ * untriaged items, while an open Medium is narrated in the State table's Medium row:
+ * F-33, F-23, F-67 and F-73 are named there and nowhere else. Checking only the first
+ * table would report F-73 as unscheduled when it is the one Medium still owed.
+ *
+ * Kept separate from `stillOpenIds` rather than merged into it, because the test that
+ * guards the "Still open" table needs the narrow reading: the State table legitimately
+ * mentions findings that are now closed, in the sentence explaining what closed them.
+ */
+const openIds = (() => {
+    const collect = (header) => {
+        const start = doc.indexOf(header);
+        if (start === -1) return [];
+        return doc.slice(start, doc.indexOf('\n\n', start)).match(/F-\d+/g) || [];
+    };
+    return [...new Set([...collect('| Sev | Still open |'), ...collect('| Sev | State |')])];
+})();
+
+
 /**
  * Whether a finding may legitimately appear in the "still open" table.
  *
@@ -219,6 +249,49 @@ describe('the document still has all of its sections', () => {
         expect(doc).toContain(heading);
     });
 
+    it('names only findings the standing table still lists as open', () => {
+        // The invariant that catches a stale list, which "does the section exist"
+        // cannot. The truncation repaired in #41 left fifteen lines of an *outdated*
+        // priority list under the current one, still scheduling F-43 and the
+        // download-popup leak as owed. Both read perfectly well; only one was true,
+        // and no test noticed for as many releases as it took to look.
+        //
+        // The standing table is the source of truth for what is open, so the priority
+        // list may not name anything that is not in it. When something ships, this
+        // fails until the item is removed - which is the moment it is easiest to
+        // forget.
+        const list = doc.slice(doc.indexOf('### Next session, in priority order'));
+
+        // The items themselves, not the prose around them.
+        const items = [...list.matchAll(/^\d+\. \*\*(.+?)\*\*/gm)]
+            .map((m) => m[1])
+            .filter((title) => !title.startsWith('`linkResolver`')); // untriaged, no id
+
+        expect(items.length).toBeGreaterThan(0);
+
+        for (const title of items) {
+            for (const id of title.match(/F-\d+/g) || []) {
+                expect([id, openIds.includes(id)]).toEqual([id, true]);
+            }
+        }
+    });
+
+    it('does not contain the same list item twice', () => {
+        // The section guard above checks that a section *exists*. It cannot see a
+        // stale copy of one that should have been deleted - which is exactly what the
+        // truncation repaired in #41 left behind: fifteen lines of an outdated
+        // priority list, still naming F-43 and the download-popup leak as owed, sitting
+        // under the current one. Both lists read perfectly well. Only one of them was
+        // true.
+        //
+        // So the check is on repetition, not on presence. Every numbered item in the
+        // document must be distinct.
+        const items = [...doc.matchAll(/^(\d+)\. \*\*(.+?)\*\*/gm)].map((m) => m[2].trim());
+        const dupes = items.filter((t, i) => items.indexOf(t) !== i);
+
+        expect(dupes).toEqual([]);
+    });
+
     it('still lists what is owed, and the list is not empty', () => {
         // The priority list is the section most likely to rot, because closing an
         // item is the one edit that always applies to it.
@@ -240,14 +313,6 @@ describe('the standing table agrees with the register', () => {
         const start = doc.indexOf('**Standing as of');
         expect(start).toBeGreaterThan(-1);
         return doc.slice(start, doc.indexOf('### Lesson worth keeping', start));
-    })();
-
-    /** Findings named in the "Still open" rows specifically. */
-    const stillOpenIds = (() => {
-        const start = doc.indexOf('| Sev | Still open |');
-        if (start === -1) return [];
-        const block = doc.slice(start, doc.indexOf('\n\n', start));
-        return [...new Set(block.match(/F-\d+/g) || [])];
     })();
 
     it('lists no finding that the register calls fixed', () => {

@@ -1040,7 +1040,8 @@ what happens", and the fix should have been a log line, not a throw.
 
 ### Next session, in priority order
 
-**The first three items shipped** — `processSections` (F-74), the F-38 residual and F-43.
+**Five items shipped since the last list** — `processSections` (F-74), the F-38 residual, F-43,
+the attachment popup leak (F-75), and asset fidelity (F-49/F-27).
 The list is replaced rather than accumulated, because "what this review still owes" is the
 only useful version of this section, and the previous list scheduled F-44/F-45/F-46,
 F-36/F-37, F-32, F-23 and F-40/F-48 — all shipped.
@@ -1053,40 +1054,20 @@ F-36/F-37, F-32, F-23 and F-40/F-48 — all shipped.
    *readiness* signal independent of the title: the canvas must be shown to have changed
    since the click before stability is accepted. That is a change to the wait rather than
    to the comparison, and it wants its own measurement.
-2. **F-49 / F-27 — asset fidelity.** Images are always written `.png` regardless of the
-   real format, and image `alt` text is discarded, so `![[assets/x.png|alt]]` would
-   round-trip. Both change output, and the decision is taken: the extension follows the
-   real format. The PR is marked for review rather than merged, because every image
-   filename changes.
-3. **F-18 / F-28 / F-54 — the remaining parser and scraper polish**, plus
+2. **F-18 / F-28 / F-54 — the remaining parser and scraper polish**, plus
    `openNotebook`'s leaked listing page. All Low. The listing page is left alone
    deliberately: closing the window OneNote opened the editor from could plausibly break
    the editor through `window.opener`, and that is a runtime consequence rather than a
    code defect — F-21's rule says measure before changing behaviour. It wants a live
    run that watches what the editor does when its opener goes away.
-4. **`linkResolver`'s case-folding and second full read/write pass.** The correctness half
+3. **`linkResolver`'s case-folding and second full read/write pass.** The correctness half
    is done; this is the cost half, and it wants a measurement on a real notebook rather
    than a guess about which of the two matters.
-5. **F-68 — two same-named pages share one dump name**, so the first pair is overwritten.
+4. **F-68 — two same-named pages share one dump name**, so the first pair is overwritten.
    Deliberately narrow: the PNG is named after its HTML so a bug report naming one finds
    the other, and every fix here makes that harder.
-6. **F-19 — the `className` guard asymmetry**, recorded as latent and unreachable today.
+5. **F-19 — the `className` guard asymmetry**, recorded as latent and unreachable today.
    Listed so it is not mistaken for done; it is not worth a change on its own.
-   `ensureDirSync` at require time, so merely importing any module can throw on a
-   read-only filesystem. One line of laziness, and the only remaining import-side-effect
-   in the codebase. `dumpSubDir`'s minute granularity is cosmetic next to it.
-3. **F-43 — the `diagnose-*` scripts.** They hand-roll `process.argv` parsing while
-   `commander` is already a dependency, and call `process.exit` inside functions. They
-   also ship in the tarball via `files: ["src/"]`, which is a packaging question worth
-   deciding rather than a code one.
-4. **F-49 / F-27 — asset fidelity.** Images are always written `.png` regardless of the
-   real format, and image `alt` text is discarded, so `![[assets/x.png|alt]]` would
-   round-trip. Both are small, both change output, both want a decision about whether
-   the extension should follow the actual content type.
-5. **F-18 / F-28 / F-54 — the remaining parser and scraper polish**, plus
-   `openNotebook`'s leaked listing page and the download popups that leak on the error
-   path. All Low. All want a browser run to confirm against the live UI.
-6. **`linkResolver`'s case-folding and second full read/write pass.** The correctness
    half is done; this is the cost half, and it wants a measurement on a real notebook
    rather than a guess about which of the two matters.
 

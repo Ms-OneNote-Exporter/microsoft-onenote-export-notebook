@@ -22,3 +22,4 @@ dumps/*/*
 !dumps/*/INDEX.md
 .qwen
 QWEN.md
+.opencode/
