@@ -175,6 +175,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pictures came back rather than one — a page that prints out a document had been
   dropping two more, silently, for the same reason.
 
+- **An untitled page is no longer thrown away.** OneNote does not leave the title *out*
+  of an untitled page — it renders one that is empty — so the check that refuses a page
+  whose title is not the one that was asked for never matched, and the page was discarded
+  on every run:
+
+  ```
+  Error: the page never settled on the canvas in OneNote, so nothing was written for it.
+  The canvas is showing "" instead.
+  ```
+
+  An empty canvas title is now read as *untitled*. This is deliberately narrow: it
+  applies only when the page that was requested is itself called one of the known
+  untitled labels, so a page you have deliberately **titled** "Untitled Page" is still
+  verified by name exactly as before — a notebook can hold both, and the name alone does
+  not say which kind of page it is.
+
+  **Known limit:** an untitled page whose name you have set to something else is still
+  refused, because a name cannot tell an untitled page from a titled one. Accepting any
+  empty title instead would fix that too, but it would settle one poll early after an
+  untitled page and could write the previous page's content under the next page's name —
+  a silent wrong answer rather than a reported failure. Left alone deliberately.
+
 ## [0.3.7] - 2026-10-01
 
 A **patch**. The CLI contract, the exit codes and the output of a correct export

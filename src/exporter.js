@@ -188,6 +188,46 @@ function normalisePageName(value) {
 }
 
 /**
+ * The names OneNote gives a page that has no title.
+ *
+ * Bounded on purpose, and tied to F-33: it cannot cover every language OneNote
+ * ships, and the list is a list of *labels* rather than a rule about emptiness,
+ * because the two are not the same thing.
+ *
+ * A notebook can hold a page the author deliberately named "Untitled Page" — with
+ * a title on the canvas and text under it — next to a genuinely untitled page in
+ * another section. The name therefore says nothing about which kind of page this
+ * is, and a rule that read "the request is called Untitled Page, so an empty
+ * canvas title will do" would let the first stand in for the second. So this only
+ * unlocks the empty-title case, and only for a request whose own name is one of
+ * these: a *titled* page is still verified by name, exactly as before.
+ *
+ * A page in a language not listed here keeps today's behaviour - refused, and
+ * counted - which is the bug rather than a new failure, and is the limit F-33
+ * already argues for.
+ */
+const UNTITLED_PAGE_LABELS = new Set([
+    'untitled', 'untitled page', 'untitled note',
+    'page sans titre',
+    'nueva página', 'página sin título',
+    'neue seite', 'unbenannte seite',
+    'nuova pagina', 'pagina senza titolo',
+    'nieuwe pagina', 'ongenoemde pagina',
+    'sida utan namn', 'ny sida',
+    'sida tanpa tajuk', 'trang khong ten'
+]);
+
+/**
+ * Whether a page name is OneNote's label for a page that has no title.
+ *
+ * @param {string} name - Page name as the section list gave it
+ * @returns {boolean}
+ */
+function isUntitledPageName(name) {
+    return UNTITLED_PAGE_LABELS.has(normalisePageName(name));
+}
+
+/**
  * Decides whether the canvas is settled on the page that was asked for.
  *
  * A rendered canvas is not the same as the right canvas, and neither is a
@@ -219,6 +259,19 @@ function isRequestedPageOnScreen(state, expectedTitle) {
     // More than one title means a switch is still in progress, whichever page is
     // being cloned.
     if (state.titles.length > 1) return false;
+
+    // F-67: OneNote does not leave the title out for an untitled page, it leaves
+    // it *empty*. So `titles` is [''], which used to fall through to the comparison
+    // below and be measured against 'Untitled Page' - never equal, retried once,
+    // and then thrown away. The page was rendered, with a date and whatever the
+    // author put on it, and the export reported it as a failure.
+    //
+    // Read as "untitled", and only for a request that is itself untitled: a page
+    // the author *named* "Untitled Page" has that string on its canvas, so it is
+    // still matched by name like any other titled page, and an empty title on
+    // screen cannot stand in for it.
+    if (!state.titles[0].trim()) return isUntitledPageName(expectedTitle);
+
     return normalisePageName(state.titles[0]) === normalisePageName(expectedTitle);
 }
 
