@@ -28,6 +28,11 @@ const nodeGlobals = {
     global: 'readonly',
     structuredClone: 'readonly',
     fetch: 'readonly',
+    // Node >= 15. `options.signal` is an AbortSignal, so a caller exercising the
+    // abort path has to build one - and without this the only way to write that
+    // test is an eslint-disable, which is worse than declaring the global.
+    AbortController: 'readonly',
+    AbortSignal: 'readonly',
 };
 
 const jestGlobals = {
