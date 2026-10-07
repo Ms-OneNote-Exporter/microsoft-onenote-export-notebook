@@ -156,6 +156,7 @@ describe('the counters are wired into the download chain', () => {
         success: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn(),
         debug: jest.fn(), step: jest.fn(), log: jest.fn(),
         getDumpDir: jest.fn(), getDumpDisplayPath: jest.fn(),
+        setSink: jest.fn(),
     }));
 
     const { downloadAttachment, getStrategyStats, resetStrategyStats } = require('../src/downloadStrategies');

@@ -9,6 +9,11 @@ const { withRetry, permanent } = require('./utils/retry');
 const { writeDebugDump } = require('./utils/dumps');
 const { classifyFetchTarget } = require('./utils/fetchHosts');
 const { createNotebookSession, NotebookUnavailableError } = require('./notebookFrame');
+const {
+    EXPORT_EVENT_TYPES,
+    PARTIAL_REASONS,
+    createExportObserver
+} = require('./export-observer');
 const readline = require('readline');
 const fs = require('fs-extra');
 const path = require('path');
@@ -574,10 +579,49 @@ function renderFailedAssetNotice(assets) {
  *
  * @returns {{totalPages: number, totalAssets: number, failedPages: number, failedSections: number, failedGroups: number}}
  */
+/**
+ * Counts-so-far, as the shape `export-progress` carries.
+ *
+ * Module-level, not a closure inside `exportContent`: both the emitter in there
+ * and the terminal `export-done` in `runExport` need it, and a shared helper is
+ * how the two are kept from drifting into emitting different shapes.
+ *
+ * **Never a percentage.** Mid-run the counts-so-far are known and the totals are
+ * not — a notebook's section list is only partly enumerated at any moment, and
+ * pages inside an unopened section are not counted at all — so a fraction is
+ * undefined rather than approximate. These are the numbers that are true.
+ *
+ * @param {ReturnType<newStats>} stats
+ * @returns {{pages: number, sections: number, assets: number}}
+ */
+function progressOf(stats) {
+    return {
+        pages: stats.totalPages,
+        sections: stats.totalSections,
+        assets: stats.totalAssets
+    };
+}
+
 function newStats() {
     return {
         totalPages: 0,
         totalAssets: 0,
+        /**
+         * Sections **seen**, not sections attempted and not sections written.
+         *
+         * Incremented where the section list is enumerated, before anything is
+         * clicked, so it counts sections that were found and then failed to
+         * export. That is the number a caller needs mid-run: it is how far the
+         * walk got.
+         *
+         * Deliberately not derived from `failedSections`, which is a *failure*
+         * tally — the inverse relationship, and counting attempts instead would
+         * have reported "0 sections" for a notebook where every section failed to
+         * open. It is not "sections written" either, which would need a counter
+         * at the end of each section and would disagree with this one on exactly
+         * the runs where a section failed.
+         */
+        totalSections: 0,
         failedPages: 0,
         failedSections: 0,
         failedGroups: 0,
@@ -767,6 +811,9 @@ async function realImageExtension(filePath) {
  * @param {Set<string>} ctx.processedItems - Ids already walked, mutated
  * @param {string|null} [ctx.parentId] - Group being walked, or null at the top
  * @param {ReturnType<newStats>} ctx.stats - Run tallies, mutated
+ * @param {() => void} [ctx.onProgress] - Called after each section, for observers
+ * @param {() => boolean} [ctx.isAborted] - Whether the caller asked to stop
+ * @param {() => void} [ctx.onAbort] - Called once, when the walk stops early
  * @returns {Promise<void>}
  */
 async function processSections(ctx) {
@@ -778,7 +825,10 @@ async function processSections(ctx) {
         pageIdMap,
         processedItems,
         parentId = null,
-        stats
+        stats,
+        onProgress = () => {},
+        isAborted = () => false,
+        onAbort = () => {}
     } = ctx;
     const { items: sections, reason } = await getSections(frame, parentId);
     const warning = emptyLookupWarning(parentId, reason);
@@ -807,6 +857,22 @@ async function processSections(ctx) {
 
     for (const item of sections) {
         if (processedItems.has(item.id)) continue;
+
+        // Checked once per item, at the top of the loop, before anything is
+        // clicked. A per-page check would abort mid-section and leave a section
+        // directory with some of its pages in it and none of the run's accounts
+        // of which, which is the half-finished state worth not producing.
+        if (isAborted()) {
+            onAbort();
+            logger.warn(`Export stopped before "${item.name}".`);
+            return;
+        }
+
+        // Counted here, where the list is enumerated and before anything is
+        // clicked — so it means "sections seen", and a section that then fails to
+        // open is still counted. Not derived from failedSections, and not moved
+        // to the end of the section's work. See newStats().
+        if (item.type !== 'group') stats.totalSections++;
 
         if (item.type === 'group') {
             const groupName = uniqueName(safeName(item.name, 'Untitled group'), usedDirNames);
@@ -935,6 +1001,9 @@ async function processSections(ctx) {
             const protectedDir = path.join(outputDir, baseSectionName + ' [passProtected]');
             await fs.ensureDir(protectedDir);
             processedItems.add(item.id);
+            // A skipped section is still progress the caller can see. The count
+            // moved above, before the lock was even checked.
+            onProgress();
             continue;
         }
 
@@ -1261,6 +1330,13 @@ async function processSections(ctx) {
                 logger.error(`Failed to export ${pageInfo.name}:`, e);
             }
         }
+
+        // One announcement per section, after every page in it. Not per page: the
+        // counts move a lot inside a long section and an observer that fires on
+        // every increment is a firehose, not progress. Not at the end of the walk
+        // either, which is the case this exists to fix — someone whose export is
+        // taking four minutes has no way to see it is moving.
+        onProgress();
     }
 }
 
@@ -1454,7 +1530,11 @@ function warnIfOutputExists(outputBase) {
  * @returns {Promise<object>} Export statistics
  * @throws {NotebookUnavailableError} If the editor tab goes away mid-export
  */
-async function exportContent({ contentFrame, notebookName, options, page = null, findFrame = findContentFrame }) {
+async function exportContent({ contentFrame, notebookName, options, page = null, findFrame = findContentFrame, observer = null }) {
+    // Defaults for the direct-call path — several tests drive exportContent on a
+    // fixture with no observer. `runExport` always passes a real one.
+    const emit = observer ? observer.emit : () => { };
+    const id = observer ? observer.id : null;
     const baseDir = options.exportDir || path.resolve(__dirname, '../output');
     const outputBase = path.resolve(baseDir, safeName(notebookName, 'Notebook'));
 
@@ -1496,6 +1576,11 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
     const pageIdMap = {};
     const stats = newStats();
 
+    emit('export-started', { id, notebook: notebookName });
+
+    /** Announces progress. Cheap, and never allowed to fail a run. */
+    const report = () => emit('export-progress', { id, progress: progressOf(stats) });
+
     let stopped = null;
     try {
         await processSections({
@@ -1504,6 +1589,9 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
             converter: td,
             options,
             pageIdMap,
+            onProgress: report,
+            isAborted: observer ? observer.isAborted : () => false,
+            onAbort: observer ? observer.onAbort : () => {},
             // Created here rather than defaulted inside the function: `stats` is
             // mutable and shared by every level of the walk, so the one place that
             // has to decide whether a run starts with a fresh tally is the one that
@@ -1530,6 +1618,29 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
 
     reportSummary(stats, linkStats, outputBase, stopped ? 'the OneNote editor tab went away' : null);
 
+    if (observer && observer.wasAborted()) {
+        // After the link resolution, deliberately. Resolving links is what turns a
+        // folder full of files into a vault you can actually click through, and
+        // someone who aborted still wants to use what they got. Aborting before
+        // this would leave every internal link in the artefact pointing at a file
+        // that does not exist.
+        logger.warn('The export was stopped before it finished. What was written is on disk.');
+
+        // Nothing is written into the vault to mark it partial, and that is
+        // deliberate. PLAN-v3 §5.2 puts partial labelling on the *artifact* and
+        // makes it server-enforced: `X-Artifact-Partial: 1` on the response and a
+        // `.partial.zip` filename, so a partial vault is not mistakable for a
+        // complete one even if the UI is wrong. A marker file here would be a
+        // second labelling mechanism in the wrong layer, inside the one directory
+        // a user actually looks at.
+        //
+        // What this package owes the caller is the truth: it stopped, it kept what
+        // it had, and here are the counts. Labelling is the caller's job.
+        emit('export-aborted', { id });
+        emit('export-partial', { id, reason: 'aborted' });
+        return stats;
+    }
+
     // The exit code is set here rather than left to the caller because this is the
     // only place that knows what the run actually managed to write. A run that lost
     // items has to say so to the process, not just to the log - see exitCodeForStats
@@ -1542,6 +1653,13 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
     process.exitCode = exitCodeForStats(stats);
 
     if (stopped) throw stopped;
+
+    emit('export-done', {
+        id,
+        notebook: notebookName,
+        ...progressOf(stats)
+    });
+
     return stats;
 }
 
@@ -1556,6 +1674,12 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
  * @param {boolean} [options.notheadless] - Visible browser
  * @param {boolean} [options.dodump] - HTML debug dumps
  * @param {boolean} [options.nopassasked] - Skip password-protected sections
+ * @param {(event: object) => void} [options.onEvent] - Progress observer. See
+ *   export-observer.js for the event set. Omitting it changes nothing.
+ * @param {AbortSignal} [options.signal] - Stop the walk when aborted. What is
+ *   already on disk is kept; the run reports `export-partial {reason:'aborted'}`.
+ * @param {string} [options.id] - The caller's run id, echoed on every event. Not
+ *   generated here — this package does not know what a session is.
  * @returns {Promise<{totalPages: number, totalAssets: number}>} Export statistics
  * @throws {Error} If the export fails for any reason. The error is deliberately
  *   NOT swallowed: callers (and therefore the process exit code) must be able to
@@ -1563,6 +1687,7 @@ async function exportContent({ contentFrame, notebookName, options, page = null,
  */
 async function runExport(options = {}) {
     let session;
+    const observer = createExportObserver(options);
 
     try {
         // ── Fast path: --notebook-link skips the listing entirely ────────────
@@ -1603,7 +1728,13 @@ async function runExport(options = {}) {
             // try/finally for exactly this reason. So nothing in the toolchain
             // objects here, and the only thing standing between this and the
             // regression is a test - see test/runExportLifecycle.test.js.
-            return await exportContent({ contentFrame, notebookName, options, page: session.page });
+            return await exportContent({
+                contentFrame,
+                notebookName,
+                options,
+                page: session.page,
+                observer,
+            });
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -1688,6 +1819,7 @@ async function runExport(options = {}) {
                 notebookName: selectedNotebook.name,
                 options,
                 page: editorPage,
+                observer,
             });
         }
 
@@ -1696,6 +1828,9 @@ async function runExport(options = {}) {
         throw new Error('Export finished without selecting a notebook.');
 
     } finally {
+        // Before the browser closes: a sink outliving the run would send *this*
+        // run's lines to whatever observer ran next.
+        observer.detach();
         if (session && session.browser) {
             logger.debug('Closing browser...');
             await session.browser.close();
@@ -1705,6 +1840,13 @@ async function runExport(options = {}) {
 
 module.exports = {
     runExport,
+    // The observer vocabulary, re-exported from the package main.
+    //
+    // So a caller builds its mapping table against the *real* unions: an
+    // unlisted subpath in `package.json`'s `exports` works locally and 404s for a
+    // consumer, which is the kind of thing that passes every local test.
+    EXPORT_EVENT_TYPES,
+    PARTIAL_REASONS,
     hasTty,
     reportSummary,
     newStats,

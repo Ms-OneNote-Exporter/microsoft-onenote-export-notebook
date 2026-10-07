@@ -19,6 +19,7 @@ jest.mock('../src/utils/logger', () => ({
     log: jest.fn(),
     getDumpDir: jest.fn(),
     getDumpDisplayPath: jest.fn(),
+    setSink: jest.fn(),
 }));
 
 const logger = require('../src/utils/logger');
@@ -169,7 +170,8 @@ describe('newStats', () => {
         // same way - it is read by reportSummary and by exitCodeForStats - even
         // though it is a flag rather than a tally. F-77.
         expect(newStats()).toEqual({
-            totalPages: 0, totalAssets: 0, failedPages: 0, failedSections: 0, failedGroups: 0,
+            totalPages: 0, totalAssets: 0, totalSections: 0,
+            failedPages: 0, failedSections: 0, failedGroups: 0,
             failedAssets: 0,
             notebookNotFound: false,
         });
