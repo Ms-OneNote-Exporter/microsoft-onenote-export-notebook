@@ -88,7 +88,15 @@ describe('runExport structure', () => {
         const body = source.slice(start, source.indexOf('\n}', start));
         const lines = body.split('\n').length;
         // It was 238 lines; anything near that means the duplication is back.
-        expect(lines).toBeLessThan(150);
+        //
+        // The bound moved 150 -> 155 for the export observer, which added five
+        // lines: build it, pass it to each of the two exportContent call sites,
+        // and detach it. Each is load-bearing — the detach in particular, because
+        // the logger is a module singleton and a sink that outlives the run sends
+        // it to the *next* run's observer. Shaving comments to fit a proxy metric
+        // would have been the wrong trade; the property this test guards is
+        // duplication, and 155 is nowhere near it.
+        expect(lines).toBeLessThan(155);
     });
 });
 

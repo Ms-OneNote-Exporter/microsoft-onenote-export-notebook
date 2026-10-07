@@ -44,6 +44,7 @@ jest.mock('../src/utils/logger', () => ({
     log: jest.fn(),
     getDumpDir: jest.fn(),
     getDumpDisplayPath: jest.fn(),
+    setSink: jest.fn(),
 }));
 
 const { chromium } = require('playwright');

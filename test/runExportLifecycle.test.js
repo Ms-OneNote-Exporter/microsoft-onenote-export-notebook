@@ -47,6 +47,7 @@ jest.mock('../src/utils/logger', () => ({
     log: jest.fn(),
     getDumpDir: jest.fn(),
     getDumpDisplayPath: jest.fn(),
+    setSink: jest.fn(),
 }));
 
 const os = require('os');
@@ -181,5 +182,82 @@ describe('runExport does not close the browser before the export is done', () =>
 
         expect(runExportBody).not.toMatch(/return exportContent\(/);
         expect(runExportBody).toMatch(/return await exportContent\(/);
+    });
+
+    it('detaches the log sink, so one run cannot report into the next one', async () => {
+        // The logger is a module singleton. A sink left attached when runExport
+        // returns would send the *following* run's log lines to this caller's
+        // observer — and in a server that exports one notebook per session, into
+        // someone else's session entirely.
+        const logger = require('../src/utils/logger');
+        const stage = buildStage();
+        wireUp(stage);
+
+        await runExport({ notebook: 'My Notebook', exportDir: outDir });
+        expect(logger.setSink).toHaveBeenLastCalledWith(null);
+
+        // And on the failing path, which is where a `finally` is most likely to be
+        // skipped.
+        jest.clearAllMocks();
+        const failing = buildStage();
+        wireUp(failing);
+        failing.frame.evaluate = async () => { throw new Error('scrape blew up'); };
+
+        await expect(runExport({ notebook: 'My Notebook', exportDir: outDir }))
+            .rejects.toThrow('scrape blew up');
+        expect(logger.setSink).toHaveBeenLastCalledWith(null);
+    });
+
+    it('emits started and done around the walk, with the caller id on each', async () => {
+        const stage = buildStage();
+        wireUp(stage);
+        const events = [];
+
+        await runExport({
+            notebook: 'My Notebook',
+            exportDir: outDir,
+            id: 'export-abc',
+            onEvent: e => events.push(e),
+        });
+
+        const types = events.map(e => e.type);
+        expect(types[0]).toBe('export-started');
+        expect(types).toContain('export-done');
+
+        // `id` is the caller's and must come back on every event, or the caller
+        // cannot attribute a line to a run when two overlap.
+        for (const event of events) {
+            expect(event.id).toBe('export-abc');
+        }
+
+        const done = events.find(e => e.type === 'export-done');
+        expect(done.notebook).toBe('My Notebook');
+        expect(typeof done.pages).toBe('number');
+        expect(typeof done.sections).toBe('number');
+        expect(typeof done.assets).toBe('number');
+    });
+
+    it('behaves identically when no observer is supplied', async () => {
+        // The promise from a caller on today's version: no onEvent, no id, no
+        // signal. It must still complete, or every existing caller breaks.
+        const stage = buildStage();
+        wireUp(stage);
+
+        await expect(runExport({ notebook: 'My Notebook', exportDir: outDir }))
+            .resolves.toBeDefined();
+        expect(stage.events).toContain('frame.evaluate');
+    });
+
+    it('completes normally when the observer throws on every event', async () => {
+        // The observer is watching, not participating. Its bug must not cost the
+        // caller the export.
+        const stage = buildStage();
+        wireUp(stage);
+
+        await expect(runExport({
+            notebook: 'My Notebook',
+            exportDir: outDir,
+            onEvent: () => { throw new Error('observer bug'); },
+        })).resolves.toBeDefined();
     });
 });

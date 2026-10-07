@@ -231,6 +231,41 @@ class Logger {
         }
     }
 
+    /**
+     * Registers a sink for every emitted line, as `({level, message})`.
+     *
+     * **This is how `runExport`'s `export-log` event gets its lines.** There is no
+     * other path: the export logs from a dozen places in the walk, and threading an
+     * emitter through each of them would be a wide change that rots the first time
+     * someone adds a `logger.info` and forgets. Tapping the logger is one hook.
+     *
+     * The sink is called *after* the level check and *before* formatting, so it
+     * sees the raw message — no timestamp, no colour escapes, nothing for a caller
+     * to strip. A multi-line message arrives as one string; splitting it here would
+     * invent line boundaries the exporter did not choose.
+     *
+     * A sink that throws is swallowed and removed. It is an observer, and an
+     * observer's bug must never cost someone the export it is watching.
+     *
+     * @param {((entry: {level: string, message: unknown}) => void)|null} sink
+     */
+    setSink(sink) {
+        this._sink = typeof sink === 'function' ? sink : null;
+    }
+
+    /** Forwards one already-filtered message to the sink, if there is one. */
+    _toSink(level, message) {
+        if (!this._sink) return;
+        try {
+            this._sink({ level, message });
+        } catch (e) {
+            this._sink = null;
+            process.stderr.write(
+                `[WARN] log sink threw; detached. ${e && e.message ? e.message : e}\n`
+            );
+        }
+    }
+
     /** Generic log method for programmatic use */
     log(level, message) {
         const lv = (level || 'info').toLowerCase();
@@ -243,16 +278,19 @@ class Logger {
 
     info(message) {
         if (!this._enabled('info')) return;
+        this._toSink('info', message);
         process.stdout.write(this._formatMessage('INFO', message, chalk.blue) + '\n');
     }
 
     warn(message) {
         if (!this._enabled('warn')) return;
+        this._toSink('warn', message);
         process.stdout.write(this._formatMessage('WARN', message, chalk.yellow) + '\n');
     }
 
     error(message, error = null) {
         if (!this._enabled('error')) return;
+        this._toSink('error', message);
         process.stderr.write(this._formatMessage('ERROR', message, chalk.red) + '\n');
         if (error) {
             if (error.stack) {
@@ -272,16 +310,19 @@ class Logger {
 
     success(message) {
         if (!this._enabled('success')) return;
+        this._toSink('success', message);
         process.stdout.write(this._formatMessage('SUCCESS', message, chalk.green) + '\n');
     }
 
     debug(message) {
         if (!this._enabled('debug')) return;
+        this._toSink('debug', message);
         process.stdout.write(this._formatMessage('DEBUG', message, chalk.gray) + '\n');
     }
 
     step(message) {
         if (!this._enabled('step')) return;
+        this._toSink('step', message);
         process.stdout.write(this._formatMessage('STEP', message, chalk.magenta) + '\n');
     }
 }

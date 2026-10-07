@@ -24,6 +24,7 @@ jest.mock('../src/utils/logger', () => ({
     warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn(),
     success: jest.fn(), step: jest.fn(), log: jest.fn(),
     getDumpDir: jest.fn(), getDumpDisplayPath: jest.fn(),
+    setSink: jest.fn(),
     setLevel: jest.fn(),
 }));
 
