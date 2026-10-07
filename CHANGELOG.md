@@ -6,6 +6,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-07
+
+A **minor**. `runExport()` gains an optional progress observer and an optional
+`AbortSignal`. The CLI contract is unchanged, no dependency moved, and **an export
+that passes neither produces a byte-identical vault** — there is a test that
+asserts exactly that against the same fixture.
+
+### `options.onEvent`
+
+    export-started  { id, notebook }
+    export-progress { id, progress: { pages, sections, assets } }
+    export-log      { id, line }
+    export-done     { id, notebook, pages, sections, assets }
+    export-partial  { id, reason }   reason: 'aborted' | 'quota' | 'disk'
+    export-aborted  { id }
+
+Previously the only way to learn an export had finished was to await it, which is
+no use for an unattended run that takes minutes: there was no way to see how far
+along it was and no way to stop it.
+
+**One new counter, `totalSections`.** It did not exist, so progress had no section
+figure at all. It is counted where the section list is enumerated, before anything
+is clicked, so it means *sections seen* — one that is then found locked, or that
+fails to open, is still counted. It is deliberately not derived from
+`failedSections`, which is a failure tally and would report `0` for a notebook
+where every section failed to open.
+
+**`progress` is an object of counts, never a percentage.** Mid-run the totals are
+not known — a section list is only partly enumerated at any moment, and pages
+inside an unopened section are not counted at all — so a fraction is undefined
+rather than approximate. Render it as "N pages, M sections so far".
+
+**`export-aborted` and `export-partial` are separate events.** One says the stop
+was requested and honoured; the other says how much survived. Collapsing them
+would mean a caller can show "stopped" but cannot tell the user what they got.
+
+**`quota` and `disk` are in the reason set but never emitted here.** Only the
+serving side can see an HTTP 429 from OneNote or read free space on a volume.
+
+**No `.partial` marker is written into the vault, deliberately.** Partial
+labelling belongs to the artifact, not to the exporter's output directory: a
+`X-Artifact-Partial` header and a `.partial.zip` filename, applied by whatever
+builds and serves the archive, so a partial vault is not mistakable for a
+complete one even if the UI is wrong. A marker file inside the vault would be a
+second labelling mechanism in the wrong layer — in the one directory a user
+actually opens.
+
+### `options.signal`
+
+Abort stops the walk between sections, keeps everything already written, and emits
+`export-partial { reason: 'aborted' }`. Internal links are still resolved before
+the run reports, so what survives is a vault you can click through rather than a
+folder of files pointing at each other.
+
+`export-log` is fed by a hook on the logger rather than an emitter threaded
+through the walk, so the lines come from every `logger.info` in the export —
+including ones added later. The hook is detached when `runExport` returns; the
+logger is a module singleton, and a hook that outlived the run would deliver this
+run's output to the next run's observer.
+
+An observer that throws is logged and ignored. It is watching, not participating,
+and a caller's bug must not cost them the export.
+
 ## [0.4.0] - 2026-10-04
 
 A **minor**. Most of this release is the output of running the exporter against a
