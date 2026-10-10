@@ -46,6 +46,7 @@ program
     .option('--notebook <name>', 'Notebook to open, by name')
     .option('--notebook-link <url>', 'Notebook to open, by its OneNote URL')
     .option('--wait <seconds>', 'Extra seconds to wait after the notebook opens', seconds, '15')
+    .option('--headless', 'Run in headless mode (default: headed)')
     .parse(process.argv);
 
 const opts = program.opts();
@@ -78,12 +79,16 @@ async function diagnoseNotebook() {
 
     let session;
 
+    // `headless` is computed in navigator.js as `!options.notheadless`, so passing
+    // `notheadless: !opts.headless` ensures `--headless` sets `headless: true` in
+    // the navigator. Passing `notheadless: opts.headless` would invert the logic
+    // and make `--headless` open a browser window, which is the defect being fixed.
     if (notebookLink) {
         console.log(`[DIAG] Opening notebook by link: ${notebookLink}`);
-        session = await openNotebookByLink({ authFile, notebookLink, notheadless: true });
+        session = await openNotebookByLink({ authFile, notebookLink, notheadless: !opts.headless });
     } else {
         console.log('[DIAG] Listing notebooks to find:', notebookName);
-        session = await listNotebooks({ authFile, notheadless: true, keepOpen: true });
+        session = await listNotebooks({ authFile, notheadless: !opts.headless, keepOpen: true });
         const { notebooks, browser, context, page } = session;
         console.log(`[DIAG] Found ${notebooks.length} notebooks.`);
 
